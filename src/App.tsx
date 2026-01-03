@@ -96,29 +96,25 @@ const SmartFridge = () => {
     }
   };
 
-  // Simulate ESP32 connection and receive sensor data
+  // Connect to ESP32 and receive real sensor data
   const connectToESP32 = () => {
-    // Simulate connection
-    setSensorData(prev => ({ ...prev, connected: true }));
-
     // Poll for sensor updates every 2 seconds
     const interval = setInterval(async () => {
       try {
-        // In production, this would fetch from your Vercel API endpoint
-        // const response = await fetch('/api/sensors');
-        // const data = await response.json();
+        const response = await fetch('https://smart-fridge-two.vercel.app/api/sensors');
+        const data = await response.json();
         
-        // For now, simulate sensor fluctuations
-        setSensorData(prev => ({
-          temperature: parseFloat((prev.temperature + (Math.random() - 0.5) * 0.2).toFixed(1)),
-          humidity: Math.min(90, Math.max(30, prev.humidity + (Math.random() - 0.5) * 2)),
-          doorOpen: Math.random() > 0.95 ? !prev.doorOpen : prev.doorOpen,
-          pressure: Math.min(100, Math.max(0, prev.pressure + (Math.random() - 0.5) * 5)),
-          gasLevel: Math.min(100, Math.max(0, prev.gasLevel + (Math.random() - 0.5))),
+        setSensorData({
+          temperature: data.temperature || 0,
+          humidity: data.humidity || 0,
+          doorOpen: data.doorOpen || false,
+          pressure: data.weight || data.pressure || 0,
+          gasLevel: data.gasLevel || 0,
           lastUpdate: new Date().toISOString(),
           connected: true
-        }));
+        });
       } catch (error) {
+        console.error('Failed to fetch sensor data:', error);
         setSensorData(prev => ({ ...prev, connected: false }));
       }
     }, 2000);

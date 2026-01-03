@@ -1,5 +1,17 @@
+// Store sensor data in memory (for quick demo)
+// In production, use Vercel KV or a database
+let latestSensorData = {
+  temperature: 4.2,
+  humidity: 65,
+  weight: 0,
+  doorOpen: false,
+  pressure: 50,
+  gasLevel: 0,
+  timestamp: Date.now()
+};
+
 export default async function handler(req, res) {
-  // Enable CORS for ESP32
+  // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -11,30 +23,29 @@ export default async function handler(req, res) {
   if (req.method === 'POST') {
     const { temperature, humidity, weight, doorOpen, pressure, gasLevel } = req.body;
     
-    console.log('Received sensor data:', req.body);
+    // Update the stored data
+    latestSensorData = {
+      temperature: temperature || latestSensorData.temperature,
+      humidity: humidity || latestSensorData.humidity,
+      weight: weight || latestSensorData.weight,
+      doorOpen: doorOpen !== undefined ? doorOpen : latestSensorData.doorOpen,
+      pressure: pressure || latestSensorData.pressure,
+      gasLevel: gasLevel || latestSensorData.gasLevel,
+      timestamp: Date.now()
+    };
     
-    // Here you can store to a database (Vercel KV, PostgreSQL, etc.)
-    // For now, we'll just acknowledge receipt
+    console.log('Received and stored:', latestSensorData);
     
     return res.status(200).json({ 
       success: true, 
-      message: 'Sensor data received',
-      data: req.body
+      message: 'Sensor data received and stored',
+      data: latestSensorData
     });
   }
   
   if (req.method === 'GET') {
-    // Return latest sensor data
-    // In production, fetch from your database
-    return res.status(200).json({
-      temperature: 4.2,
-      humidity: 65,
-      weight: 25.5,
-      doorOpen: false,
-      pressure: 50,
-      gasLevel: 0,
-      timestamp: Date.now()
-    });
+    // Return the latest sensor data
+    return res.status(200).json(latestSensorData);
   }
   
   return res.status(405).json({ error: 'Method not allowed' });
