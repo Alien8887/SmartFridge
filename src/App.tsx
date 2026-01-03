@@ -50,21 +50,21 @@ const SmartFridge = () => {
 
   const loadStoredData = async () => {
     try {
-      const loginResult = await window.storage.get('user-session', false);
-      if (loginResult?.value) {
-        const session = JSON.parse(loginResult.value);
+      const loginData = localStorage.getItem('user-session');
+      if (loginData) {
+        const session = JSON.parse(loginData);
         setIsLoggedIn(true);
         setUsername(session.username);
       }
 
-      const inventoryResult = await window.storage.get('inventory', false);
-      if (inventoryResult?.value) {
-        setInventory(JSON.parse(inventoryResult.value));
+      const inventoryData = localStorage.getItem('inventory');
+      if (inventoryData) {
+        setInventory(JSON.parse(inventoryData));
       }
 
-      const modeResult = await window.storage.get('current-mode', false);
-      if (modeResult?.value) {
-        setCurrentMode(modeResult.value);
+      const modeData = localStorage.getItem('current-mode');
+      if (modeData) {
+        setCurrentMode(modeData);
       }
     } catch (error) {
       console.log('No stored data found, using defaults');
@@ -76,7 +76,7 @@ const SmartFridge = () => {
       setUsername(loginUsername.trim());
       setIsLoggedIn(true);
       try {
-        await window.storage.set('user-session', JSON.stringify({ username: loginUsername.trim() }), false);
+        localStorage.setItem('user-session', JSON.stringify({ username: loginUsername.trim() }));
       } catch (error) {
         console.error('Failed to save session:', error);
       }
@@ -89,7 +89,7 @@ const SmartFridge = () => {
     setLoginUsername('');
     setLoginPassword('');
     try {
-      await window.storage.delete('user-session', false);
+      localStorage.removeItem('user-session');
     } catch (error) {
       console.error('Failed to clear session:', error);
     }
@@ -188,13 +188,13 @@ const SmartFridge = () => {
 
   const t = darkMode ? theme.dark : theme.light;
 
-  const getFreshnessColor = (freshness) => {
+  const getFreshnessColor = (freshness: number): string => {
     if (freshness >= 85) return darkMode ? 'text-emerald-400' : 'text-emerald-600';
     if (freshness >= 70) return darkMode ? 'text-yellow-400' : 'text-yellow-600';
     return darkMode ? 'text-red-400' : 'text-red-600';
   };
 
-  const getExpiryWarning = (days) => {
+  const getExpiryWarning = (days: number): { color: string; text: string; glow: string } => {
     if (days <= 1) return { color: 'bg-red-500', text: 'Urgent', glow: 'shadow-red-500/50' };
     if (days <= 3) return { color: 'bg-yellow-500', text: 'Soon', glow: 'shadow-yellow-500/50' };
     return { color: 'bg-emerald-500', text: 'Fresh', glow: 'shadow-emerald-500/50' };
@@ -360,7 +360,7 @@ const SmartFridge = () => {
                 onClick={async () => {
                   setCurrentMode(mode.id);
                   try {
-                    await window.storage.set('current-mode', mode.id, false);
+                    localStorage.setItem('current-mode', mode.id);
                   } catch (error) {
                     console.error('Failed to save mode:', error);
                   }
@@ -588,7 +588,7 @@ const SmartFridge = () => {
     </div>
   );
 
-  const views = {
+  const views: Record<string, () => React.ReactElement> = {
     dashboard: DashboardView,
     inventory: InventoryView,
     suggestions: SuggestionsView,
