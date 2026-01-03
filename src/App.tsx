@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Analytics } from "@vercel/analytics/react";
 import { 
   Snowflake, AlertCircle, TrendingUp, ShoppingCart, 
   Thermometer, Droplets, Package, Clock, DollarSign,
@@ -599,6 +600,7 @@ const SmartFridge = () => {
 
   return (
     <div className={`min-h-screen ${t.bg} transition-colors duration-500`}>
+      <Analytics />
       {/* Header */}
       <div className={`${t.card} border-b backdrop-blur-xl sticky top-0 z-50 shadow-lg`}>
         <div className="max-w-7xl mx-auto px-4 md:px-6 py-3 md:py-4 flex items-center justify-between">
