@@ -26,7 +26,7 @@ const SmartFridge = () => {
     doorOpen: false,
     pressure: 50,
     gasLevel: 0,
-    lastUpdate: new Date().toISOString(),
+    lastUpdate: null as string | null,
     connected: false
   });
 
@@ -102,20 +102,41 @@ const SmartFridge = () => {
     const interval = setInterval(async () => {
       try {
         const response = await fetch('https://smart-fridge-two.vercel.app/api/sensors');
+        if (!response.ok) {
+          throw new Error(`ESP32 API responded with ${response.status}`);
+        }
         const data = await response.json();
-        
-        setSensorData({
-          temperature: data.temperature || 0,
-          humidity: data.humidity || 0,
-          doorOpen: data.doorOpen || false,
-          pressure: data.weight || data.pressure || 0,
-          gasLevel: data.gasLevel || 0,
+        const hasSensorPayload =
+          data &&
+          typeof data === 'object' &&
+          ('temperature' in data ||
+            'humidity' in data ||
+            'doorOpen' in data ||
+            'weight' in data ||
+            'pressure' in data ||
+            'gasLevel' in data);
+
+        if (!hasSensorPayload) {
+          setSensorData(prev => ({
+            ...prev,
+            connected: false,
+            lastUpdate: null
+          }));
+          return;
+        }
+
+        setSensorData(prev => ({
+          temperature: data.temperature ?? prev.temperature ?? 0,
+          humidity: data.humidity ?? prev.humidity ?? 0,
+          doorOpen: data.doorOpen ?? prev.doorOpen ?? false,
+          pressure: data.weight ?? data.pressure ?? prev.pressure ?? 0,
+          gasLevel: data.gasLevel ?? prev.gasLevel ?? 0,
           lastUpdate: new Date().toISOString(),
           connected: true
-        });
+        }));
       } catch (error) {
         console.error('Failed to fetch sensor data:', error);
-        setSensorData(prev => ({ ...prev, connected: false }));
+        setSensorData(prev => ({ ...prev, connected: false, lastUpdate: null }));
       }
     }, 2000);
 
@@ -264,10 +285,12 @@ const SmartFridge = () => {
             )}
             <div>
               <h3 className={`font-semibold ${t.text}`}>
-                {sensorData.connected ? 'ESP32 Connected' : 'ESP32 Disconnected'}
+                {sensorData.connected ? 'ESP32 Connected' : 'ESP32 Not Connected'}
               </h3>
               <p className={`text-xs ${t.textMuted}`}>
-                Last update: {new Date(sensorData.lastUpdate).toLocaleTimeString()}
+                {sensorData.connected && sensorData.lastUpdate
+                  ? `Last update: ${new Date(sensorData.lastUpdate).toLocaleTimeString()}`
+                  : 'No data received'}
               </p>
             </div>
           </div>
