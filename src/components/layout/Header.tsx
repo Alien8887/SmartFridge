@@ -1,0 +1,50 @@
+import React from 'react';
+import { Snowflake, Sun, Moon, LogOut, Menu, X } from 'lucide-react';
+
+interface HeaderProps {
+  username: string;
+  darkMode: boolean;
+  setDarkMode: (value: boolean) => void;
+  onLogout: () => void;
+  mobileMenuOpen: boolean;
+  setMobileMenuOpen: (value: boolean) => void;
+  theme: any;
+}
+
+export function Header({ username, darkMode, setDarkMode, onLogout, mobileMenuOpen, setMobileMenuOpen, theme }: HeaderProps) {
+  return (
+    <div className={`${theme.card} border-b backdrop-blur-xl sticky top-0 z-50 shadow-lg`}>
+      <div className="max-w-7xl mx-auto px-4 md:px-6 py-3 md:py-4 flex items-center justify-between">
+        <div className="flex items-center gap-2 md:gap-3">
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className={`lg:hidden p-2 rounded-xl ${theme.hover}`}
+          >
+            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
+          <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-br from-sky-400 to-blue-600 shadow-lg shadow-sky-500/50 flex items-center justify-center">
+            <Snowflake className="w-6 md:w-7 h-6 md:h-7 text-white" />
+          </div>
+          <div>
+            <h1 className={`text-lg md:text-2xl font-bold ${theme.text}`}>Smart Fridge</h1>
+            <p className={`text-xs ${theme.textMuted} hidden sm:block`}>Welcome, {username}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 md:gap-3">
+          <button
+            onClick={() => setDarkMode(!darkMode)}
+            className={`p-2 md:p-3 rounded-xl ${theme.hover} transition-colors`}
+          >
+            {darkMode ? <Sun className={`w-4 md:w-5 h-4 md:h-5 ${theme.accent}`} /> : <Moon className={`w-4 md:w-5 h-4 md:h-5 ${theme.accent}`} />}
+          </button>
+          <button
+            onClick={onLogout}
+            className={`p-2 md:p-3 rounded-xl ${theme.hover} transition-colors`}
+          >
+            <LogOut className={`w-4 md:w-5 h-4 md:h-5 ${theme.accent}`} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
