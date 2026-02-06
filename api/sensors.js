@@ -1,17 +1,17 @@
-// Store sensor data in memory (for quick demo)
-// In production, use Vercel KV or a database
 let latestSensorData = {
-  temperature: 4.2,
-  humidity: 65,
+  temperature: 0,
+  humidity: 0,
   weight: 0,
   doorOpen: false,
-  pressure: 50,
+  pressure: 0,
   gasLevel: 0,
-  timestamp: Date.now()
+  timestamp: 0,
+  connected: false
 };
 
+const CONNECTION_TIMEOUT = 5000; // 5 seconds
+
 export default async function handler(req, res) {
-  // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -23,29 +23,33 @@ export default async function handler(req, res) {
   if (req.method === 'POST') {
     const { temperature, humidity, weight, doorOpen, pressure, gasLevel } = req.body;
     
-    // Update the stored data
     latestSensorData = {
-      temperature: temperature || latestSensorData.temperature,
-      humidity: humidity || latestSensorData.humidity,
-      weight: weight || latestSensorData.weight,
-      doorOpen: doorOpen !== undefined ? doorOpen : latestSensorData.doorOpen,
-      pressure: pressure || latestSensorData.pressure,
-      gasLevel: gasLevel || latestSensorData.gasLevel,
-      timestamp: Date.now()
+      temperature: temperature || 0,
+      humidity: humidity || 0,
+      weight: weight || 0,
+      doorOpen: doorOpen !== undefined ? doorOpen : false,
+      pressure: pressure || 0,
+      gasLevel: gasLevel || 0,
+      timestamp: Date.now(),
+      connected: true
     };
     
-    console.log('Received and stored:', latestSensorData);
+    console.log('Received:', latestSensorData);
     
     return res.status(200).json({ 
-      success: true, 
-      message: 'Sensor data received and stored',
-      data: latestSensorData
+      success: true,
+      message: 'Data received'
     });
   }
   
   if (req.method === 'GET') {
-    // Return the latest sensor data
-    return res.status(200).json(latestSensorData);
+    const timeSinceLastUpdate = Date.now() - latestSensorData.timestamp;
+    const isConnected = timeSinceLastUpdate < CONNECTION_TIMEOUT;
+    
+    return res.status(200).json({
+      ...latestSensorData,
+      connected: isConnected
+    });
   }
   
   return res.status(405).json({ error: 'Method not allowed' });
