@@ -1,3 +1,7 @@
+# The website address https://smart-fridge-two.vercel.app/
+# The link of the virtual circuit https://wokwi.com/projects/455144517644145665
+# The Link of the github page https://github.com/Alien8887/SmartFridge
+
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
@@ -46,3 +50,5 @@ You can learn more in the [Create React App documentation](https://facebook.gith
 To learn React, check out the [React documentation](https://reactjs.org/).
 "# SmartFridge" 
 "# SmartFridge" 
+
+
