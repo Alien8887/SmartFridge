@@ -229,6 +229,3 @@ function App() {
 }
 
 export default App;
-
-// Stable ref for addAlert before hooks stabilize
-function addAlert_ref(msg: string) {}

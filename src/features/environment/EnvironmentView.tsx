@@ -62,13 +62,6 @@ export function EnvironmentView({
   const RANGES: TimeRange[] = ['1H', '24H', '7D'];
   const advice = getAdvice(doorOpenCount, totalEnergyLost);
 
-  const axisColor = darkMode ? '#94a3b8' : '#64748b';
-  const gridColor = darkMode ? '#334155' : '#e2e8f0';
-  const tooltipStyle = {
-    backgroundColor: darkMode ? '#1e293b' : '#ffffff',
-    border: '1px solid ' + (darkMode ? '#475569' : '#e2e8f0'),
-    borderRadius: '12px'
-  };
 
   return (
     <div className="space-y-4 md:space-y-6">
