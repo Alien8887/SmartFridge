@@ -5,31 +5,47 @@ export function useInventory() {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
 
   useEffect(() => {
-    const inventoryData = localStorage.getItem('inventory');
-    if (inventoryData) {
-      setInventory(JSON.parse(inventoryData));
+    try {
+      const raw = localStorage.getItem('inventory');
+      if (raw) {
+        const parsed: InventoryItem[] = JSON.parse(raw);
+        // Back-compat: add addedDate if missing
+        const fixed = parsed.map(item => ({
+          ...item,
+          addedDate: item.addedDate ?? Date.now()
+        }));
+        setInventory(fixed);
+      }
+    } catch {
+      console.log('No stored inventory');
     }
   }, []);
 
-  const addProduct = (product: Product) => {
-    const newProduct: InventoryItem = {
-      id: Date.now(),
-      name: product.name,
-      category: product.category,
-      expiry: product.defaultExpiry,
-      quantity: '1x',
-      freshness: 100
-    };
-    const updated = [...inventory, newProduct];
+  const save = (updated: InventoryItem[]) => {
     setInventory(updated);
-    localStorage.setItem('inventory', JSON.stringify(updated));
+    try { localStorage.setItem('inventory', JSON.stringify(updated)); } catch {}
+  };
+
+  const addProduct = (product: Product, quantity: string = '1x') => {
+    const newProduct: InventoryItem = {
+      id:        Date.now(),
+      name:      product.name,
+      category:  product.category,
+      expiry:    product.defaultExpiry,
+      quantity,
+      freshness: 100,
+      addedDate: Date.now(),
+    };
+    save([...inventory, newProduct]);
   };
 
   const removeProduct = (id: number) => {
-    const updated = inventory.filter(item => item.id !== id);
-    setInventory(updated);
-    localStorage.setItem('inventory', JSON.stringify(updated));
+    save(inventory.filter(item => item.id !== id));
   };
 
-  return { inventory, addProduct, removeProduct };
+  const updateProduct = (id: number, changes: Partial<InventoryItem>) => {
+    save(inventory.map(item => item.id === id ? { ...item, ...changes } : item));
+  };
+
+  return { inventory, addProduct, removeProduct, updateProduct };
 }
