@@ -1,66 +1,126 @@
-// Store in memory (will reset on deployment but works for testing)
-let latestSensorData = {
-  temperature: null,
-  humidity: null,
-  weight: null,
-  doorOpen: false,
-  pressure: null,
-  gasLevel: null,
-  timestamp: 0,
-  connected: false
+// api/sensors.js — CommonJS version (no "export default")
+
+const CONFIDENCE_MS = 30000;
+
+// In-memory store — resets when Vercel cold-starts the function
+// For production, replace with a real database (Vercel KV, etc.)
+let state = {
+  temperature:     null,
+  humidity:        null,
+  doorOpen:        false,
+  pressure:        0,
+  gasLevel:        0,
+  weight:          0,
+  targetTemp:      4.0,
+  actualTemp:      null,
+  servoAngle:      90,
+  lastSeen:        0,
+  doorOpenCount:   0,
+  totalEnergyLost: 0,
+  doorHistory:     []
 };
 
-const CONNECTION_TIMEOUT = 10000; // 10 seconds timeout
-
-export default async function handler(req, res) {
-  // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
+module.exports = function handler(req, res) {
+  // Allow cross-origin requests (needed for ESP32 and browser)
+  res.setHeader('Access-Control-Allow-Origin',  '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  
+
+  // Handle browser pre-flight OPTIONS request
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
-  
-  // POST: Receive data from Wokwi/ESP32
+
+  // ── POST: ESP32 sends sensor data TO the server ──────────
   if (req.method === 'POST') {
-    const { temperature, humidity, weight, doorOpen, pressure, gasLevel } = req.body;
-    
-    latestSensorData = {
-      temperature: temperature !== undefined ? temperature : null,
-      humidity: humidity !== undefined ? humidity : null,
-      weight: weight !== undefined ? weight : null,
-      doorOpen: doorOpen !== undefined ? doorOpen : false,
-      pressure: pressure !== undefined ? pressure : null,
-      gasLevel: gasLevel !== undefined ? gasLevel : null,
-      timestamp: Date.now(),
-      connected: true
+    const {
+      temperature, humidity, weight,
+      doorOpen, pressure, gasLevel,
+      targetTemp, servoAngle
+    } = req.body;
+
+    const now      = Date.now();
+    const wasOpen  = state.doorOpen;
+    const isNowOpen = Boolean(doorOpen);
+
+    // Track door open events for energy calculation
+    // Only count when door transitions from CLOSED → OPEN
+    if (!wasOpen && isNowOpen) {
+      state.doorOpenCount   += 1;
+      state.totalEnergyLost  = parseFloat(
+        (state.totalEnergyLost + 0.012).toFixed(4)
+      );
+      state.doorHistory = [
+        ...state.doorHistory.slice(-199),
+        { timestamp: now, energy: 0.012 }
+      ];
+    }
+
+    // Update state with incoming sensor values
+    // Only update if the value is a real number (not -999 sentinel)
+    state = {
+      ...state,
+      temperature:  (typeof temperature === 'number' && temperature !== -999)
+                      ? temperature : state.temperature,
+      humidity:     (typeof humidity    === 'number' && humidity    !== -999)
+                      ? humidity    : state.humidity,
+      weight:       (typeof weight      === 'number' && weight      !== -999)
+                      ? Math.abs(weight) : state.weight,
+      pressure:     (typeof pressure    === 'number')
+                      ? Math.abs(pressure) : state.pressure,
+      gasLevel:     (typeof gasLevel    === 'number') ? gasLevel    : 0,
+      doorOpen:     isNowOpen,
+      servoAngle:   (typeof servoAngle  === 'number') ? servoAngle  : state.servoAngle,
+      targetTemp:   (typeof targetTemp  === 'number') ? targetTemp  : state.targetTemp,
+      actualTemp:   (typeof temperature === 'number' && temperature !== -999)
+                      ? temperature : state.actualTemp,
+      lastSeen:     now
     };
-    
-    console.log('📥 Received from ESP32:', latestSensorData);
-    
-    return res.status(200).json({ 
+
+    return res.status(200).json({
       success: true,
-      message: 'Data received',
-      timestamp: latestSensorData.timestamp
+      message: 'Sensor data received',
+      // Echo back the current setpoint so ESP32 knows what user wants
+      targetTemperature: state.targetTemp
     });
   }
-  
-  // GET: Send data to frontend
+
+  // ── GET: Website reads sensor data FROM the server ───────
   if (req.method === 'GET') {
-    const timeSinceLastUpdate = Date.now() - latestSensorData.timestamp;
-    const isConnected = latestSensorData.timestamp > 0 && timeSinceLastUpdate < CONNECTION_TIMEOUT;
-    
-    const responseData = {
-      ...latestSensorData,
-      connected: isConnected,
-      timeSinceUpdate: timeSinceLastUpdate
-    };
-    
-    console.log('📤 Sending to frontend:', responseData);
-    
-    return res.status(200).json(responseData);
+    const now        = Date.now();
+    const timeSince  = now - state.lastSeen;
+
+    // Connection confidence interval:
+    // If data was received within 30 seconds → show as connected
+    // If lastSeen is 0 (server just cold-started) → show as offline
+    const isConnected = state.lastSeen > 0 && timeSince < CONFIDENCE_MS;
+
+    return res.status(200).json({
+      // Raw sensor readings
+      temperature:      state.temperature,
+      humidity:         state.humidity,
+      weight:           state.weight,
+      doorOpen:         state.doorOpen,
+      pressure:         state.pressure,
+      gasLevel:         state.gasLevel,
+      servoAngle:       state.servoAngle,
+
+      // Temperature setpoint (what user wants vs what sensor reads)
+      targetTemperature: state.targetTemp,
+      actualTemp:        state.actualTemp,
+
+      // Energy tracking
+      doorOpenCount:    state.doorOpenCount,
+      totalEnergyLost:  state.totalEnergyLost,
+      doorHistory:      state.doorHistory,
+
+      // Connection status
+      connected:        isConnected,
+      lastSeen:         state.lastSeen,
+      timeSinceUpdate:  timeSince
+    });
   }
-  
+
+  // Any other HTTP method (PUT, DELETE, etc.) is not allowed
   return res.status(405).json({ error: 'Method not allowed' });
-}
+};
