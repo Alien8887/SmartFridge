@@ -3,7 +3,7 @@ import { SensorData, ChartDataPoint, EnergyData } from '../types';
 
 const BASE = process.env.REACT_APP_API_URL || '';
 const POLL_MS = 2000;
-const CONF_MS = 30_000;
+// const CONF_MS = 30_000;
 const MAX_PTS = 5_000;
 const DOOR_ALARM_S = 30;
 const UPLOAD_MS = 60_000;
