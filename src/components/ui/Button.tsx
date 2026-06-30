@@ -1,4 +1,5 @@
 import React from 'react';
+import { Loader2 } from 'lucide-react';
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'success' | 'ghost';
 type Size    = 'sm' | 'md' | 'lg';
@@ -13,13 +14,14 @@ export interface ButtonProps {
   fullWidth?: boolean;
   isDark?:    boolean;
   disabled?:  boolean;
+  loading?:   boolean;
   type?:      'button' | 'submit' | 'reset';
 }
 
 export function Button({
   children, onClick, variant = 'primary', size = 'md',
   className = '', icon, fullWidth = false, isDark = true,
-  disabled = false, type = 'button'
+  disabled = false, loading = false, type = 'button',
 }: ButtonProps) {
   const variantStyles: Record<Variant, string> = {
     primary:   'bg-sky-500 hover:bg-sky-600 text-white shadow-lg shadow-sky-500/20',
@@ -37,22 +39,16 @@ export function Button({
     lg: 'px-6 py-3 text-base',
   };
 
+  const isDisabled = disabled || loading;
+
   return (
     <button
       type={type}
       onClick={onClick}
-      disabled={disabled}
-      className={`
-        flex items-center justify-center gap-2 rounded-xl font-medium
-        transition-all active:scale-95
-        ${variantStyles[variant]}
-        ${sizeStyles[size]}
-        ${fullWidth ? 'w-full' : ''}
-        ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-        ${className}
-      `.replace(/\s+/g, ' ').trim()}
+      disabled={isDisabled}
+      className={`flex items-center justify-center gap-2 rounded-xl font-medium transition-all active:scale-95 ${variantStyles[variant]} ${sizeStyles[size]} ${fullWidth ? 'w-full' : ''} ${isDisabled ? 'opacity-50 cursor-not-allowed' : ''} ${className}`}
     >
-      {icon && <span className="flex-shrink-0">{icon}</span>}
+      {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : icon && <span className="flex-shrink-0">{icon}</span>}
       {children}
     </button>
   );
