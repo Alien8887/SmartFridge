@@ -4,6 +4,7 @@ import { Input } from '../../components/ui/Input';
 import { Button } from '../../components/ui/Button';
 import { Product, Theme } from '../../types';
 import { CATEGORIES, getIconForCategory, getCategoryColors } from '../../utils/categoryUtils';
+import { unitLabel } from '../../utils/unitUtils';
 
 interface ProductModalProps { onAdd: (product: Product, quantityAmount: number, quantityUnit: string) => void; onClose: () => void; darkMode: boolean; theme: Theme; }
 
@@ -73,7 +74,7 @@ export function ProductModal({ onAdd, onClose, darkMode, theme }: ProductModalPr
           <div>
             <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>Unit</label>
             <select value={unit} onChange={e => setUnit(e.target.value)} className={selectClass(darkMode)}>
-              {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+              {UNITS.map(u => <option key={u} value={u}>{unitLabel(u)}</option>)}
             </select>
           </div>
         </div>

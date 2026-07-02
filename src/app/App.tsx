@@ -7,6 +7,7 @@ import { DashboardView } from '../features/dashboard/DashboardView';
 import { InventoryView } from '../features/inventory/InventoryView';
 import { SuggestionsView } from '../features/suggestions/SuggestionsView';
 import { EnvironmentView } from '../features/environment/EnvironmentView';
+import { CalendarView } from '../features/calendar/CalendarView';
 import { ProfileView } from '../features/profile/ProfileView';
 import { useTheme } from '../hooks/useTheme';
 import { useAuth } from '../hooks/useAuth';
@@ -16,6 +17,8 @@ import { useInventory } from '../hooks/useInventory';
 import { useConsumption } from '../hooks/useConsumption';
 import { useMLPredictions } from '../hooks/useMLPredictions';
 import { usePreferences } from '../hooks/usePreferences';
+import { useProfile } from '../hooks/useProfile';
+import { useCalendar } from '../hooks/useCalendar';
 
 function App() {
   const { user, loading: authLoading, error: authError, setError: setAuthError, login, register, logout } = useAuth();
@@ -33,10 +36,12 @@ function App() {
     setTargetTemp, isConnected,
   } = useESP32Sensors(addAlert, token, username);
 
-  const { inventory, loading: invLoading, addProduct, consumeItem, wasteItem } = useInventory(token, username);
-  const { consumptionHistory, logItem, totalConsumed, totalWasted, topItems } = useConsumption(token, username);
+  const { inventory, loading: invLoading, addProduct, consumeItem, wasteItem, resetInventory } = useInventory(token, username);
+  const { consumptionHistory, logItem, totalConsumed, totalWasted, topItems, resetStats } = useConsumption(token, username);
   const { ml, advice, loading: mlLoading, aiLoading, mlUpdatedAt, adviceUpdatedAt, runPredictions, getAIAdvice } = useMLPredictions(token);
   const { ratings, rateRecipe } = usePreferences(token);
+  const { profile, loading: profileLoading, updateFridgeInfo } = useProfile(token);
+  const { calendar, loading: calendarLoading, setMeal } = useCalendar(token, username);
 
   const [activeView, setActiveView] = useState('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -65,9 +70,6 @@ function App() {
     return () => clearInterval(id);
   }, [isConnected, token, advice, sensorData.temperature, sensorData.humidity, inventory, doorOpenCount, getAIAdvice]);
 
-  // "Used" partially consumes a quantity; "Waste" discards whatever is left.
-  // consumeItem/wasteItem (from useInventory) handle the quantity math and
-  // server sync; logItem (from useConsumption) handles the stats tracking.
   const handleConsume = useCallback((id: number, amount: number) => {
     const item = inventory.find(i => i.id === id);
     if (!item) return;
@@ -92,34 +94,24 @@ function App() {
       <div className={`min-h-screen ${theme.bg} flex items-center justify-center p-4`}>
         <div className={`${theme.card} border rounded-3xl p-8 md:p-10 shadow-2xl w-full max-w-md animate-scale-in`}>
           <div className="text-center mb-8">
-            <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center mb-4 shadow-lg shadow-sky-500/30 animate-glow-pulse">
-              <Snowflake className="w-12 h-12 text-white" />
-            </div>
+            <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center mb-4 shadow-lg shadow-sky-500/30 animate-glow-pulse"><Snowflake className="w-12 h-12 text-white" /></div>
             <h1 className={`text-3xl font-bold ${theme.text} mb-1`}>Smart Fridge</h1>
             <p className={`text-sm ${theme.textMuted}`}>Intelligent Food Management</p>
           </div>
-
           <div className={`flex rounded-xl overflow-hidden border mb-6 ${darkMode ? 'border-slate-700' : 'border-slate-200'}`}>
             {[{ id: false, label: 'Sign in', icon: LogIn }, { id: true, label: 'Register', icon: UserPlus }].map(t => (
-              <button key={String(t.id)} onClick={() => { setShowReg(t.id); setAuthError(null); setRegSuccess(''); }} className={`flex-1 py-2 text-sm font-medium transition-colors flex items-center justify-center gap-1 ${showRegister === t.id ? 'bg-sky-500 text-white' : darkMode ? 'text-slate-200 hover:bg-slate-700/60' : 'text-slate-700 hover:bg-slate-100'}`}>
-                <t.icon className="w-4 h-4" />{t.label}
-              </button>
+              <button key={String(t.id)} onClick={() => { setShowReg(t.id); setAuthError(null); setRegSuccess(''); }} className={`flex-1 py-2 text-sm font-medium transition-colors flex items-center justify-center gap-1 ${showRegister === t.id ? 'bg-sky-500 text-white' : darkMode ? 'text-slate-200 hover:bg-slate-700/60' : 'text-slate-700 hover:bg-slate-100'}`}><t.icon className="w-4 h-4" />{t.label}</button>
             ))}
           </div>
-
           {authError && <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm text-center animate-slide-down">{authError}</div>}
           {regSuccess && <div className="mb-4 p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-sm text-center animate-slide-down">{regSuccess}</div>}
-
           <div className="space-y-4">
             {!showRegister ? (
               <>
                 <input type="text" value={loginUsername} onChange={e => { setLoginUser(e.target.value); setAuthError(null); }} onKeyDown={e => e.key === 'Enter' && login(loginUsername, loginPassword)} placeholder="Username" autoComplete="username" className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all ${darkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-500'}`} />
                 <input type="password" value={loginPassword} onChange={e => { setLoginPass(e.target.value); setAuthError(null); }} onKeyDown={e => e.key === 'Enter' && login(loginUsername, loginPassword)} placeholder="Password" autoComplete="current-password" className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all ${darkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-500'}`} />
                 <button onClick={() => login(loginUsername, loginPassword)} className="w-full py-3 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white rounded-xl font-semibold transition-all active:scale-95 shadow-lg shadow-sky-500/20">Sign in</button>
-                <div className={`p-3 rounded-xl text-xs space-y-0.5 ${darkMode ? 'bg-slate-700/50' : 'bg-slate-100'}`}>
-                  <p className={`font-semibold ${theme.textMuted} mb-1`}>Default accounts:</p>
-                  <p className={theme.textMuted}>admin / admin123 · user / user123 · guest / guest (read-only)</p>
-                </div>
+                <div className={`p-3 rounded-xl text-xs space-y-0.5 ${darkMode ? 'bg-slate-700/50' : 'bg-slate-100'}`}><p className={`font-semibold ${theme.textMuted} mb-1`}>Default accounts:</p><p className={theme.textMuted}>admin / admin123 · user / user123 · guest / guest (read-only)</p></div>
               </>
             ) : (
               <>
@@ -148,27 +140,13 @@ function App() {
             onRunPredictions={() => runPredictions(sensorData.temperature, sensorData.humidity, inventory, true)}
             onGetAdvice={() => getAIAdvice(sensorData.temperature, sensorData.humidity, inventory, doorOpenCount)}
             onDismissAlert={dismissAlert} onDismissAll={dismissAll}
-            token={token}
-            darkMode={darkMode} theme={theme}
+            token={token} darkMode={darkMode} theme={theme}
           />
         );
       case 'inventory':
-        return (
-          <InventoryView
-            inventory={inventory} loading={invLoading} topItems={topItems}
-            onAddProduct={handleAddProduct} onConsume={handleConsume} onWaste={handleWaste}
-            readOnly={isGuest} darkMode={darkMode} theme={theme}
-          />
-        );
+        return <InventoryView inventory={inventory} loading={invLoading} topItems={topItems} onAddProduct={handleAddProduct} onConsume={handleConsume} onWaste={handleWaste} readOnly={isGuest} darkMode={darkMode} theme={theme} />;
       case 'suggestions':
-        return (
-          <SuggestionsView
-            inventory={inventory} onAddProduct={handleAddProduct} onConsume={handleConsume}
-            ratings={ratings} onRate={rateRecipe}
-            totalConsumed={totalConsumed} totalWasted={totalWasted}
-            darkMode={darkMode} theme={theme}
-          />
-        );
+        return <SuggestionsView inventory={inventory} onAddProduct={handleAddProduct} onConsume={handleConsume} ratings={ratings} onRate={rateRecipe} dietaryPreferences={profile?.dietaryPreferences ?? []} darkMode={darkMode} theme={theme} />;
       case 'environment':
         return (
           <EnvironmentView
@@ -180,8 +158,10 @@ function App() {
             darkMode={darkMode} theme={theme}
           />
         );
+      case 'calendar':
+        return <CalendarView calendar={calendar} loading={calendarLoading} onSetMeal={setMeal} dailyCalorieGoal={profile?.dailyCalorieGoal ?? null} darkMode={darkMode} theme={theme} />;
       case 'profile':
-        return <ProfileView token={token} username={username} darkMode={darkMode} theme={theme} />;
+        return <ProfileView token={token} username={username} darkMode={darkMode} theme={theme} profile={profile} profileLoading={profileLoading} onUpdateFridgeInfo={updateFridgeInfo} onResetInventory={resetInventory} onResetStats={resetStats} />;
       default: return null;
     }
   };

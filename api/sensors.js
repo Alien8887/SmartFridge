@@ -1,11 +1,11 @@
-const { redis } = require('./_redis');
+const { redis } = require('../lib/redis');
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization' };
 const CONFIDENCE_MS = 30000;
 const AI_GOAL_TTL_MS = 1_800_000;
 const AI_MARGIN = 0.3;
-const BASE_ENERGY_PER_OPEN = 0.008;     // fixed cost of the compressor cycling
-const ENERGY_PER_SECOND_OPEN = 0.0006;  // marginal cost per second the door stays open
+const BASE_ENERGY_PER_OPEN = 0.008;
+const ENERGY_PER_SECOND_OPEN = 0.0006;
 
 async function resolveUser(token) {
   if (!token) return null;
@@ -32,12 +32,8 @@ module.exports = async function handler(req, res) {
     let doorOpenedAt = prev.doorOpenedAt ?? null;
     let lastOpenDurationSec = prev.lastOpenDurationSec ?? null;
 
-    if (!prev.doorOpen && isOpen) {
-      // closed -> open
-      prev.doorOpenCount = (prev.doorOpenCount || 0) + 1;
-      doorOpenedAt = Date.now();
-    } else if (prev.doorOpen && !isOpen && doorOpenedAt) {
-      // open -> closed — duration is now known, charge energy for exactly this event
+    if (!prev.doorOpen && isOpen) { prev.doorOpenCount = (prev.doorOpenCount || 0) + 1; doorOpenedAt = Date.now(); }
+    else if (prev.doorOpen && !isOpen && doorOpenedAt) {
       const durationSec = Math.max(0, Math.round((Date.now() - doorOpenedAt) / 1000));
       const eventEnergy = BASE_ENERGY_PER_OPEN + ENERGY_PER_SECOND_OPEN * durationSec;
       prev.energyLost = +(((prev.energyLost || 0) + eventEnergy).toFixed(4));
@@ -51,21 +47,14 @@ module.exports = async function handler(req, res) {
       temperature: hasRealTelemetry && temperature !== -999 ? temperature : (prev.temperature ?? null),
       humidity: typeof humidity === 'number' && humidity !== -999 ? humidity : (prev.humidity ?? null),
       weight: typeof weight === 'number' && weight !== -999 ? weight : (prev.weight ?? 0),
-      doorOpen: isOpen,
-      doorOpenedAt,
-      lastOpenDurationSec,
+      doorOpen: isOpen, doorOpenedAt, lastOpenDurationSec,
       servoAngle: typeof servoAngle === 'number' ? servoAngle : (prev.servoAngle ?? 90),
-      // targetTemp is only ever written by a logged-in user via the dashboard — the
-      // firmware never sends this field, it only ever reads goalTemp on its GET poll.
       targetTemp: typeof targetTemp === 'number' ? Math.max(0, Math.min(10, targetTemp)) : (prev.targetTemp ?? 4),
-      doorOpenCount: prev.doorOpenCount,
-      energyLost: prev.energyLost,
+      doorOpenCount: prev.doorOpenCount, energyLost: prev.energyLost,
       dhtOK: typeof dhtOK === 'boolean' ? dhtOK : (prev.dhtOK ?? null),
       hxOK: typeof hxOK === 'boolean' ? hxOK : (prev.hxOK ?? null),
       rssi: typeof rssi === 'number' ? rssi : (prev.rssi ?? null),
       uptimeSec: typeof uptimeSec === 'number' ? uptimeSec : (prev.uptimeSec ?? null),
-      // lastSeen ONLY advances on a request carrying a real temperature reading —
-      // a dashboard-only POST (setting targetTemp) can never fake a live connection.
       lastSeen: hasRealTelemetry ? Date.now() : (typeof prev.lastSeen === 'number' ? prev.lastSeen : null),
     };
     await redis.set(key, data);
@@ -81,9 +70,7 @@ module.exports = async function handler(req, res) {
     let goalTemp = data.targetTemp ?? 4;
     let aiAdjusted = false;
     let aiReason = null;
-    if (aiGoal && Date.now() - aiGoal.computedAt < AI_GOAL_TTL_MS && aiGoal.recommendedTemp < goalTemp - AI_MARGIN) {
-      goalTemp = aiGoal.recommendedTemp; aiAdjusted = true; aiReason = aiGoal.reason;
-    }
+    if (aiGoal && Date.now() - aiGoal.computedAt < AI_GOAL_TTL_MS && aiGoal.recommendedTemp < goalTemp - AI_MARGIN) { goalTemp = aiGoal.recommendedTemp; aiAdjusted = true; aiReason = aiGoal.reason; }
 
     return res.status(200).json({ ...data, goalTemp: +goalTemp.toFixed(1), aiAdjusted, aiReason, connected });
   }

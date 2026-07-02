@@ -9,6 +9,7 @@ import { ProductModal } from './ProductModal';
 import { InventoryItem, Product, Theme } from '../../types';
 import { groupByCategory, getIconForCategory, getCategoryColors, getAvailableCategories } from '../../utils/categoryUtils';
 import { getItemStatus, getDaysUntilExpiry } from '../../utils/expiryUtils';
+import { formatQuantity, unitLabel } from '../../utils/unitUtils';
 import { TopItem } from '../../hooks/useConsumption';
 
 interface InventoryViewProps {
@@ -95,7 +96,6 @@ export function InventoryView({
         </div>
       )}
 
-      {/* Quiet frequency row — small text, not a stat card, per request */}
       {topItems.length > 0 && (
         <div className={`flex items-center gap-2 flex-wrap text-xs ${theme.textMuted}`}>
           <span className="font-medium">You often use:</span>
@@ -179,7 +179,7 @@ export function InventoryView({
                               <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${colorSet.badge}`}>{status.charAt(0).toUpperCase() + status.slice(1)}</span>
                             </div>
                             <div className="grid grid-cols-2 gap-3 text-xs">
-                              <div><span className={theme.textMuted}>Qty</span><p className={`font-medium ${theme.text}`}>{item.quantityAmount} {item.quantityUnit}</p></div>
+                              <div><span className={theme.textMuted}>Qty</span><p className={`font-medium ${theme.text}`}>{formatQuantity(item.quantityAmount, item.quantityUnit)} {unitLabel(item.quantityUnit)}</p></div>
                               <div><span className={theme.textMuted}>Expires</span><p className={`font-medium ${status === 'fresh' ? 'text-emerald-400' : status === 'expiring' ? 'text-yellow-400' : 'text-red-400'}`}>{daysLeft > 0 ? `${daysLeft}d` : 'Expired'}</p></div>
                             </div>
                             <div className="mt-1"><span className={`text-xs ${theme.textMuted}`}>Freshness</span><FreshnessBar pct={freshPct} darkMode={darkMode} /></div>
@@ -195,7 +195,7 @@ export function InventoryView({
                                 />
                               ) : isConfirmingWaste ? (
                                 <div className="flex items-center gap-2">
-                                  <span className={`text-xs ${theme.textMuted}`}>Waste all {item.quantityAmount} {item.quantityUnit}?</span>
+                                  <span className={`text-xs ${theme.textMuted}`}>Waste all {formatQuantity(item.quantityAmount, item.quantityUnit)} {unitLabel(item.quantityUnit)}?</span>
                                   <button onClick={() => { onWaste(item.id); setConfirmWasteId(null); }} className="px-2 py-1 rounded-md text-xs font-medium bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors">Confirm</button>
                                   <button onClick={() => setConfirmWasteId(null)} className="px-2 py-1 rounded-md text-xs font-medium bg-slate-600 text-white hover:bg-slate-500 transition-colors">Cancel</button>
                                 </div>

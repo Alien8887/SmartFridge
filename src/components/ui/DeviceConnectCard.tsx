@@ -16,7 +16,7 @@ export function DeviceConnectCard({ token, darkMode, theme }: DeviceConnectCardP
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch(`${BASE}/api/auth/device-token`, { headers: { Authorization: `Bearer ${token}` } });
+      const r = await fetch(`${BASE}/api/auth?action=device-token`, { headers: { Authorization: `Bearer ${token}` } });
       let d: any = {};
       try { d = await r.json(); } catch { /* non-JSON response */ }
       if (!r.ok) throw new Error(d.error || `Request failed (HTTP ${r.status}) — is the API deployed?`);

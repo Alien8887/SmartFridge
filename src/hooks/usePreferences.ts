@@ -9,7 +9,7 @@ export function usePreferences(token: string) {
   useEffect(() => {
     if (!token || fetchedRef.current) return;
     fetchedRef.current = true;
-    fetch(`${BASE}/api/preferences-db`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${BASE}/api/user-data?resource=preferences`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => { if (d.ratings) setRatings(d.ratings); })
       .catch(() => { /* ignore */ });
@@ -18,7 +18,11 @@ export function usePreferences(token: string) {
   const rateRecipe = useCallback((recipeId: string, stars: number) => {
     setRatings(prev => ({ ...prev, [recipeId]: stars }));
     if (token) {
-      fetch(`${BASE}/api/preferences-db`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ action: 'rate', recipeId, stars }) }).catch(() => {});
+      fetch(`${BASE}/api/user-data?resource=preferences`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: 'rate', recipeId, stars }),
+      }).catch(() => { /* ignore */ });
     }
   }, [token]);
 

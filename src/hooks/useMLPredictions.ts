@@ -93,7 +93,7 @@ export function useMLPredictions(token: string) {
 
     setLoading(true);
     try {
-      const r = await fetch(`${BASE}/api/predict`, {
+      const r = await fetch(`${BASE}/api/ai?action=predict`, {
         method:  'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -121,7 +121,7 @@ export function useMLPredictions(token: string) {
     if (!token) return;
     setAiLoading(true);
     try {
-      const r = await fetch(`${BASE}/api/smart-advice`, {
+      const r = await fetch(`${BASE}/api/ai?action=advice`, {
         method:  'POST',
         headers: {
           'Content-Type': 'application/json',
