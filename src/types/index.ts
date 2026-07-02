@@ -1,80 +1,81 @@
 export interface SensorData {
   temperature: number;
-  humidity:    number;
-  doorOpen:    boolean;
-  pressure:    number;
-  gasLevel:    number;
-  lastUpdate:  string | null;
-  connected:   boolean;
+  humidity: number;
+  doorOpen: boolean;
+  pressure: number;
+  gasLevel: number;
+  lastUpdate: string | null;
+  connected: boolean;
 }
 
 export interface InventoryItem {
-  id:        number;
-  name:      string;
-  category:  string;
-  expiry:    number;        // default expiry days from catalog
-  quantity:  string;
+  id: number;
+  name: string;
+  category: string;
+  expiry: number;
+  quantityAmount: number;
+  quantityUnit: string;
   freshness: number;
-  addedDate: number;        // Unix ms — required for freshness calc
+  addedDate: number;
 }
 
 export interface Product {
-  name:          string;
-  category:      string;
+  name: string;
+  category: string;
   defaultExpiry: number;
 }
 
 export interface Alert {
-  id:        number;
-  message:   string;
+  id: number;
+  message: string;
   timestamp: Date;
 }
 
 export interface MealSuggestion {
-  name:        string;
+  name: string;
   ingredients: string[];
-  time:        string;
+  time: string;
 }
 
 export interface Mode {
-  id:   string;
+  id: string;
   name: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: any;
 }
 
 export interface Theme {
-  bg:        string;
-  card:      string;
-  text:      string;
+  bg: string;
+  card: string;
+  text: string;
   textMuted: string;
-  accent:    string;
-  hover:     string;
-  border?:   string;
+  accent: string;
+  hover: string;
+  border?: string;
 }
 
 export interface ConsumptionData {
-  day:         string;
-  dairy:       number;
-  meat:        number;
-  vegetables:  number;
-  fruits:      number;
+  day: string;
+  dairy: number;
+  meat: number;
+  vegetables: number;
+  fruits: number;
 }
 
 export interface EnergyData {
-  time:       string;
-  usage:      number;
-  doorOpens:  number;
+  time: string;
+  usage: number;
+  doorOpens: number;
   timestamp?: number;
 }
 
 export interface CategoryData {
-  name:  string;
+  name: string;
   value: number;
   color: string;
 }
 
 export interface ChartDataPoint {
-  time:       string;
-  value:      number;
+  time: string;
+  value: number;
   timestamp?: number;
 }

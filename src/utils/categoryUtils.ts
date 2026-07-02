@@ -15,7 +15,7 @@ const CATEGORY_COLOR_MAP: Record<string, { bg: string; text: string; badge: stri
   Fruits:     { bg: 'bg-orange-50', text: 'text-orange-700', badge: 'bg-orange-100', ring: 'ring-orange-400' },
   Vegetables: { bg: 'bg-green-50',  text: 'text-green-700',  badge: 'bg-green-100',  ring: 'ring-green-400'  },
   Beverages:  { bg: 'bg-cyan-50',   text: 'text-cyan-700',   badge: 'bg-cyan-100',   ring: 'ring-cyan-400'   },
-  Condiments: { bg: 'bg-purple-50', text: 'text-purple-700', badge: 'bg-purple-100', ring: 'ring-purple-400' },
+  Condiments: { bg: 'bg-rose-50',   text: 'text-rose-700',   badge: 'bg-rose-100',   ring: 'ring-rose-400' },
   Frozen:     { bg: 'bg-slate-50',  text: 'text-slate-700',  badge: 'bg-slate-100',  ring: 'ring-slate-400'  },
   Other:      { bg: 'bg-gray-50',   text: 'text-gray-700',   badge: 'bg-gray-100',   ring: 'ring-gray-400'   },
 };

@@ -4,36 +4,55 @@ import { ConsumptionData } from '../types';
 const BASE = process.env.REACT_APP_API_URL || '';
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+export interface TopItem { name: string; count: number; }
+
 function makeInitial(): ConsumptionData[] { return DAYS.map(day => ({ day, dairy: 0, meat: 0, vegetables: 0, fruits: 0 })); }
-function loadLocalWeek(): ConsumptionData[] {
-  try { const raw = localStorage.getItem('sf-consumption'); return raw ? JSON.parse(raw) : makeInitial(); } catch { return makeInitial(); }
+function weekKey(u: string) { return `sf-consumption:${u}`; }
+function numKey(u: string, k: string) { return `sf-${k}:${u}`; }
+
+function loadLocalWeek(u: string): ConsumptionData[] {
+  if (!u) return makeInitial();
+  try { const raw = localStorage.getItem(weekKey(u)); return raw ? JSON.parse(raw) : makeInitial(); } catch { return makeInitial(); }
 }
-function loadLocalNumber(key: string): number {
-  try { return parseInt(localStorage.getItem(key) ?? '0', 10) || 0; } catch { return 0; }
+function loadLocalNumber(u: string, k: string): number {
+  if (!u) return 0;
+  try { return parseInt(localStorage.getItem(numKey(u, k)) ?? '0', 10) || 0; } catch { return 0; }
 }
 
-export function useConsumption(token: string) {
-  const [consumptionHistory, setConsumptionHistory] = useState<ConsumptionData[]>(loadLocalWeek);
-  const [totalConsumed, setTotalConsumed] = useState(() => loadLocalNumber('sf-total-consumed'));
-  const [totalWasted,   setTotalWasted]   = useState(() => loadLocalNumber('sf-total-wasted'));
-  const fetchedRef = useRef(false);
+export function useConsumption(token: string, username: string) {
+  const [consumptionHistory, setConsumptionHistory] = useState<ConsumptionData[]>(() => makeInitial());
+  const [totalConsumed, setTotalConsumed] = useState(0);
+  const [totalWasted, setTotalWasted] = useState(0);
+  const [topItems, setTopItems] = useState<TopItem[]>([]);
+  const loadedForUser = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!token || fetchedRef.current) return;
-    fetchedRef.current = true;
+    if (!username) { setConsumptionHistory(makeInitial()); setTotalConsumed(0); setTotalWasted(0); setTopItems([]); return; }
+    if (loadedForUser.current === username) return;
+    loadedForUser.current = username;
+
+    setConsumptionHistory(loadLocalWeek(username));
+    setTotalConsumed(loadLocalNumber(username, 'total-consumed'));
+    setTotalWasted(loadLocalNumber(username, 'total-wasted'));
+
+    if (!token) return;
     fetch(`${BASE}/api/consumption-db`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => {
         if (d.week) setConsumptionHistory(d.week);
         if (typeof d.totalConsumed === 'number') setTotalConsumed(d.totalConsumed);
         if (typeof d.totalWasted === 'number') setTotalWasted(d.totalWasted);
+        if (Array.isArray(d.topItems)) setTopItems(d.topItems);
       })
       .catch(() => { /* keep local cache */ });
-  }, [token]);
+  }, [username, token]);
 
-  const logItem = useCallback((category: string, action: 'consume' | 'waste') => {
+  const logItem = useCallback((name: string, category: string, action: 'consume' | 'waste', amount = 1) => {
+    if (!username) return;
+    const amt = Math.max(1, amount);
+
     if (action === 'waste') {
-      setTotalWasted(prev => { const next = prev + 1; try { localStorage.setItem('sf-total-wasted', String(next)); } catch {} return next; });
+      setTotalWasted(prev => { const next = prev + amt; try { localStorage.setItem(numKey(username, 'total-wasted'), String(next)); } catch {} return next; });
     } else {
       const todayName = DAYS[new Date().getDay()];
       setConsumptionHistory(prev => {
@@ -43,20 +62,20 @@ export function useConsumption(token: string) {
           if (key === 'day' || !(key in row)) return row;
           return { ...row, [key]: (row[key] as number) + 1 };
         });
-        try { localStorage.setItem('sf-consumption', JSON.stringify(updated)); } catch {}
+        try { localStorage.setItem(weekKey(username), JSON.stringify(updated)); } catch {}
         return updated;
       });
-      setTotalConsumed(prev => { const next = prev + 1; try { localStorage.setItem('sf-total-consumed', String(next)); } catch {} return next; });
+      setTotalConsumed(prev => { const next = prev + amt; try { localStorage.setItem(numKey(username, 'total-consumed'), String(next)); } catch {} return next; });
     }
 
     if (token) {
       fetch(`${BASE}/api/consumption-db`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ category, action }),
-      }).catch(() => {});
+        body: JSON.stringify({ name, category, action, amount: amt }),
+      }).then(r => r.ok ? r.json() : null).then(d => { if (d?.topItems) setTopItems(d.topItems); }).catch(() => {});
     }
-  }, [token]);
+  }, [token, username]);
 
-  return { consumptionHistory, logItem, totalConsumed, totalWasted };
+  return { consumptionHistory, logItem, totalConsumed, totalWasted, topItems };
 }

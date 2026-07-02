@@ -10,6 +10,19 @@ export function calculateFreshness(expiryDays: number, addedDateTimestamp: numbe
   return Math.max(0, Math.min(100, freshness));
 }
 
+/**
+ * Status is RELATIVE to the item's own shelf life, not a fixed day count.
+ * A 3-day-shelf-life item only shows "expiring" in its last ~25% of life
+ * (about the final day), instead of the moment it's added.
+ */
+export function getItemStatus(expiry: number, addedDate: number): 'expired' | 'expiring' | 'fresh' {
+  const daysLeft = getDaysUntilExpiry(expiry, addedDate);
+  if (daysLeft <= 0) return 'expired';
+  const expiringThreshold = Math.max(1, Math.ceil(expiry * 0.25));
+  if (daysLeft <= expiringThreshold) return 'expiring';
+  return 'fresh';
+}
+
 export function getExpiryStatus(daysRemaining: number): {
   color: string; bgColor: string; text: string; glow: string; priority: 'urgent' | 'soon' | 'fresh';
 } {

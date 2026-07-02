@@ -1,13 +1,13 @@
 const { redis } = require('./_redis');
 
 const CORS = {
-  'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
 async function getUser(req) {
-  const auth    = (req.headers.authorization || '').slice(7);
+  const auth = (req.headers.authorization || '').slice(7);
   const session = await redis.get(`session:${auth}`);
   return session && Date.now() < session.expiresAt ? session.username : null;
 }
@@ -28,15 +28,16 @@ module.exports = async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      const { name, category, expiry, quantity } = req.body || {};
+      const { id, name, category, expiry, quantityAmount, quantityUnit } = req.body || {};
       const existing = await redis.get(key);
-      const list     = Array.isArray(existing) ? existing : [];
-      const newItem  = {
-        id:        Date.now(),
-        name:      (name || '').trim(),
-        category:  category || 'Other',
-        expiry:    Number(expiry) || 7,
-        quantity:  quantity || '1x',
+      const list = Array.isArray(existing) ? existing : [];
+      const newItem = {
+        id: typeof id === 'number' ? id : Date.now(),
+        name: (name || '').trim(),
+        category: category || 'Other',
+        expiry: Number(expiry) || 7,
+        quantityAmount: Number(quantityAmount) || 1,
+        quantityUnit: quantityUnit || 'pcs',
         freshness: 100,
         addedDate: Date.now(),
       };
@@ -44,10 +45,26 @@ module.exports = async function handler(req, res) {
       return res.status(201).json(newItem);
     }
 
-    if (req.method === 'DELETE') {
-      const id       = Number(req.query.id);
+    // Was missing entirely — useInventory.ts's consumeItem/addProduct-merge
+    // logic calls this to persist partial quantity changes.
+    if (req.method === 'PATCH') {
+      const { id, quantityAmount } = req.body || {};
+      if (typeof id !== 'number' || typeof quantityAmount !== 'number') {
+        return res.status(400).json({ error: 'id and quantityAmount are required' });
+      }
       const existing = await redis.get(key);
-      const list     = Array.isArray(existing) ? existing : [];
+      const list = Array.isArray(existing) ? existing : [];
+      const idx = list.findIndex(i => i.id === id);
+      if (idx === -1) return res.status(404).json({ error: 'Item not found' });
+      list[idx] = { ...list[idx], quantityAmount };
+      await redis.set(key, list);
+      return res.status(200).json(list[idx]);
+    }
+
+    if (req.method === 'DELETE') {
+      const id = Number(req.query.id);
+      const existing = await redis.get(key);
+      const list = Array.isArray(existing) ? existing : [];
       await redis.set(key, list.filter(i => i.id !== id));
       return res.status(200).json({ success: true });
     }

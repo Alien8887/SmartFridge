@@ -15,28 +15,31 @@ import { useAlerts } from '../hooks/useAlerts';
 import { useInventory } from '../hooks/useInventory';
 import { useConsumption } from '../hooks/useConsumption';
 import { useMLPredictions } from '../hooks/useMLPredictions';
+import { usePreferences } from '../hooks/usePreferences';
 
 function App() {
   const { user, loading: authLoading, error: authError, setError: setAuthError, login, register, logout } = useAuth();
   const { darkMode, setDarkMode, theme } = useTheme();
 
   const token = user?.token ?? '';
-  const isGuest = user?.username === 'guest' || user?.role === 'guest';
+  const username = user?.username ?? '';
+  const isGuest = username === 'guest' || user?.role === 'guest';
 
   const { alerts, addAlert, analyzeSensor, dismissAlert, dismissAll } = useAlerts();
   const {
     sensorData, temperatureHistory, humidityHistory, pressureHistory, energyHistory,
     targetTemp, goalTemp, aiAdjusted, aiReason, servoAngle,
-    doorOpenCount, totalEnergyLost, doorAlarmActive, diagnostics, setTargetTemp, isConnected,
-  } = useESP32Sensors(addAlert, token);
+    doorOpenCount, totalEnergyLost, doorAlarmActive, lastOpenDurationSec, diagnostics,
+    setTargetTemp, isConnected,
+  } = useESP32Sensors(addAlert, token, username);
 
-  const { inventory, loading: invLoading, addProduct, removeProduct } = useInventory(token);
-  const { consumptionHistory, logItem, totalConsumed, totalWasted } = useConsumption(token);
+  const { inventory, loading: invLoading, addProduct, consumeItem, wasteItem } = useInventory(token, username);
+  const { consumptionHistory, logItem, totalConsumed, totalWasted, topItems } = useConsumption(token, username);
   const { ml, advice, loading: mlLoading, aiLoading, mlUpdatedAt, adviceUpdatedAt, runPredictions, getAIAdvice } = useMLPredictions(token);
+  const { ratings, rateRecipe } = usePreferences(token);
 
   const [activeView, setActiveView] = useState('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
-
   const [currentMode, setCurrentModeState] = useState(() => { try { return localStorage.getItem('current-mode') || 'normal'; } catch { return 'normal'; } });
   const setCurrentMode = useCallback((id: string) => { setCurrentModeState(id); try { localStorage.setItem('current-mode', id); } catch { /* ignore */ } }, []);
 
@@ -56,17 +59,31 @@ function App() {
     return () => clearInterval(id);
   }, [isConnected, token, sensorData.temperature, sensorData.humidity, inventory, runPredictions]);
 
-  // Auto-refresh Claude advice every 10 minutes — only once the person has
-  // opted in by clicking the button at least once, so API usage stays
-  // bounded to people who actually want continuous advice.
   useEffect(() => {
     if (!isConnected || !token || !advice) return;
     const id = setInterval(() => getAIAdvice(sensorData.temperature, sensorData.humidity, inventory, doorOpenCount), 600_000);
     return () => clearInterval(id);
   }, [isConnected, token, advice, sensorData.temperature, sensorData.humidity, inventory, doorOpenCount, getAIAdvice]);
 
-  const handleConsume = useCallback((id: number, cat: string) => { logItem(cat, 'consume'); removeProduct(id); }, [logItem, removeProduct]);
-  const handleWaste = useCallback((id: number, cat: string) => { logItem(cat, 'waste'); removeProduct(id); }, [logItem, removeProduct]);
+  // "Used" partially consumes a quantity; "Waste" discards whatever is left.
+  // consumeItem/wasteItem (from useInventory) handle the quantity math and
+  // server sync; logItem (from useConsumption) handles the stats tracking.
+  const handleConsume = useCallback((id: number, amount: number) => {
+    const item = inventory.find(i => i.id === id);
+    if (!item) return;
+    consumeItem(id, amount);
+    logItem(item.name, item.category, 'consume', amount);
+  }, [inventory, consumeItem, logItem]);
+
+  const handleWaste = useCallback((id: number) => {
+    const item = inventory.find(i => i.id === id);
+    if (!item) return;
+    const wastedAmount = item.quantityAmount;
+    wasteItem(id);
+    logItem(item.name, item.category, 'waste', wastedAmount);
+  }, [inventory, wasteItem, logItem]);
+
+  const handleAddProduct = useCallback((p: Parameters<typeof addProduct>[0], amt: number, unit: string) => addProduct(p, amt, unit), [addProduct]);
 
   if (authLoading) return <div className={`min-h-screen ${theme.bg} flex items-center justify-center`}><div className="w-10 h-10 rounded-full border-4 border-sky-500 border-t-transparent animate-spin" /></div>;
 
@@ -126,20 +143,32 @@ function App() {
             consumptionHistory={consumptionHistory} totalConsumed={totalConsumed} totalWasted={totalWasted}
             currentMode={currentMode} setCurrentMode={setCurrentMode}
             targetTemp={targetTemp} goalTemp={goalTemp} aiAdjusted={aiAdjusted} aiReason={aiReason}
-            servoAngle={servoAngle} doorAlarmActive={doorAlarmActive} setTargetTemp={setTargetTemp}
-            isConnected={isConnected}
-            ml={ml} advice={advice} mlLoading={mlLoading} aiLoading={aiLoading}
-            mlUpdatedAt={mlUpdatedAt} adviceUpdatedAt={adviceUpdatedAt}
+            servoAngle={servoAngle} doorAlarmActive={doorAlarmActive} setTargetTemp={setTargetTemp} isConnected={isConnected}
+            ml={ml} advice={advice} mlLoading={mlLoading} aiLoading={aiLoading} mlUpdatedAt={mlUpdatedAt} adviceUpdatedAt={adviceUpdatedAt}
             onRunPredictions={() => runPredictions(sensorData.temperature, sensorData.humidity, inventory, true)}
             onGetAdvice={() => getAIAdvice(sensorData.temperature, sensorData.humidity, inventory, doorOpenCount)}
             onDismissAlert={dismissAlert} onDismissAll={dismissAll}
-            token={token} darkMode={darkMode} theme={theme}
+            token={token}
+            darkMode={darkMode} theme={theme}
           />
         );
       case 'inventory':
-        return <InventoryView inventory={inventory} loading={invLoading} onAddProduct={(p, q) => addProduct(p, q)} onConsume={handleConsume} onWaste={handleWaste} readOnly={isGuest} darkMode={darkMode} theme={theme} />;
+        return (
+          <InventoryView
+            inventory={inventory} loading={invLoading} topItems={topItems}
+            onAddProduct={handleAddProduct} onConsume={handleConsume} onWaste={handleWaste}
+            readOnly={isGuest} darkMode={darkMode} theme={theme}
+          />
+        );
       case 'suggestions':
-        return <SuggestionsView inventory={inventory} totalConsumed={totalConsumed} totalWasted={totalWasted} darkMode={darkMode} theme={theme} />;
+        return (
+          <SuggestionsView
+            inventory={inventory} onAddProduct={handleAddProduct} onConsume={handleConsume}
+            ratings={ratings} onRate={rateRecipe}
+            totalConsumed={totalConsumed} totalWasted={totalWasted}
+            darkMode={darkMode} theme={theme}
+          />
+        );
       case 'environment':
         return (
           <EnvironmentView
@@ -147,20 +176,19 @@ function App() {
             temperatureHistory={temperatureHistory} humidityHistory={humidityHistory} pressureHistory={pressureHistory}
             targetTemp={targetTemp} goalTemp={goalTemp} aiAdjusted={aiAdjusted} aiReason={aiReason}
             servoAngle={servoAngle} doorOpenCount={doorOpenCount} totalEnergyLost={totalEnergyLost}
-            doorAlarmActive={doorAlarmActive} diagnostics={diagnostics}
+            doorAlarmActive={doorAlarmActive} lastOpenDurationSec={lastOpenDurationSec} diagnostics={diagnostics}
             darkMode={darkMode} theme={theme}
           />
         );
       case 'profile':
-        return <ProfileView token={token} username={user.username} darkMode={darkMode} theme={theme} />;
-      default:
-        return null;
+        return <ProfileView token={token} username={username} darkMode={darkMode} theme={theme} />;
+      default: return null;
     }
   };
 
   return (
     <div className={`min-h-screen ${theme.bg} transition-colors duration-500`}>
-      <Header username={user.username} role={user.role} darkMode={darkMode} setDarkMode={setDarkMode} onLogout={logout} mobileMenuOpen={mobileOpen} setMobileMenuOpen={setMobileOpen} isConnected={isConnected} theme={theme} />
+      <Header username={username} role={user.role} darkMode={darkMode} setDarkMode={setDarkMode} onLogout={logout} mobileMenuOpen={mobileOpen} setMobileMenuOpen={setMobileOpen} isConnected={isConnected} theme={theme} />
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-8 flex gap-4 md:gap-6">
         <Sidebar activeView={activeView} setActiveView={setActiveView} theme={theme} darkMode={darkMode} />
         <MobileMenu isOpen={mobileOpen} activeView={activeView} setActiveView={setActiveView} onClose={() => setMobileOpen(false)} theme={theme} darkMode={darkMode} />
