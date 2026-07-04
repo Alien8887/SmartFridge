@@ -6,11 +6,9 @@ import {
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { StatCard } from '../../components/ui/StatCard';
-import { ConsumptionChart } from '../../components/charts/ConsumptionChart';
-import { DeviceConnectCard } from '../../components/ui/DeviceConnectCard';
 import type { EnhancedAlert } from '../../hooks/useAlerts';
 import type { MLResult, SmartAdvice } from '../../hooks/useMLPredictions';
-import { SensorData, InventoryItem, ConsumptionData, Theme } from '../../types';
+import { SensorData, InventoryItem, Theme } from '../../types';
 import { getItemStatus } from '../../utils/expiryUtils';
 import { modes } from '../../data/modes';
 
@@ -18,7 +16,6 @@ interface DashboardViewProps {
   sensorData: SensorData;
   alerts: EnhancedAlert[];
   inventory: InventoryItem[];
-  consumptionHistory: ConsumptionData[];
   totalConsumed: number;
   totalWasted: number;
   currentMode: string;
@@ -41,7 +38,6 @@ interface DashboardViewProps {
   onGetAdvice: () => void;
   onDismissAlert: (id: number) => void;
   onDismissAll: () => void;
-  token: string;
   darkMode: boolean;
   theme: Theme;
 }
@@ -63,32 +59,29 @@ function timeAgo(ts: number | null): string {
 }
 
 export function DashboardView({
-  sensorData, alerts, inventory, consumptionHistory, totalConsumed, totalWasted,
+  sensorData, alerts, inventory, totalConsumed, totalWasted,
   currentMode, setCurrentMode, targetTemp, goalTemp, aiAdjusted, aiReason, servoAngle,
   doorAlarmActive, setTargetTemp, isConnected,
   ml, advice, mlLoading, aiLoading, mlUpdatedAt, adviceUpdatedAt, onRunPredictions, onGetAdvice,
-  onDismissAlert, onDismissAll, token, darkMode, theme,
+  onDismissAlert, onDismissAll, darkMode, theme,
 }: DashboardViewProps) {
   const criticalAlerts = alerts.filter(a => a.severity === 'critical');
   const TrendIcon = ml ? trendIcon[ml.forecast.trend] : Minus;
 
-  // Fixed: previously used the raw nominal `expiry` field, which never
-  // reflects days actually remaining — now uses the same relative-status
-  // helper as every other view, so the count here always matches Inventory.
   const expiringOrExpired = inventory.filter(i => { const s = getItemStatus(i.expiry, i.addedDate); return s === 'expiring' || s === 'expired'; }).length;
   const expiredCount = inventory.filter(i => getItemStatus(i.expiry, i.addedDate) === 'expired').length;
 
   return (
     <div className="space-y-4 md:space-y-6 animate-fade-in">
-      {!isConnected && <DeviceConnectCard token={token} darkMode={darkMode} theme={theme} />}
 
+      {/* 1 — Connection status: the one thing worth knowing before anything else */}
       <Card className={`${theme.card} ${isConnected ? 'border-emerald-500/40' : 'border-red-500/40'} animate-slide-down`}>
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             {isConnected ? <div className="relative"><Wifi className="w-6 h-6 text-emerald-400" /><div className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-400 rounded-full animate-pulse" /></div> : <WifiOff className="w-6 h-6 text-red-400 animate-pulse" />}
             <div>
               <h3 className={`font-semibold ${theme.text}`}>{isConnected ? '✓ Fridge connected — live data' : '✗ Fridge offline'}</h3>
-              <p className={`text-xs flex items-center gap-1 mt-0.5 ${theme.textMuted}`}><Clock className="w-3 h-3" />{sensorData.lastUpdate ? `Updated ${new Date(sensorData.lastUpdate).toLocaleTimeString()}` : 'No data received yet'}</p>
+              <p className={`text-xs flex items-center gap-1 mt-0.5 ${theme.textMuted}`}><Clock className="w-3 h-3" />{sensorData.lastUpdate ? `Updated ${new Date(sensorData.lastUpdate).toLocaleTimeString()}` : 'No data received yet — connect your fridge from the Profile tab'}</p>
             </div>
           </div>
           <div className="grid grid-cols-2 md:flex md:gap-6 gap-3">
@@ -107,7 +100,74 @@ export function DashboardView({
         </div>
       </Card>
 
-      {/* ── AI Analysis — the ONLY block that drives goalTemp overrides ─────── */}
+      {/* 2 — Alerts */}
+      {alerts.length > 0 && (
+        <Card className={`${theme.card} ${criticalAlerts.length > 0 ? 'border-red-500/30' : 'border-yellow-500/30'} animate-slide-down`}>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className={`font-semibold ${theme.text} flex items-center gap-2`}><Bell className="w-5 h-5 text-yellow-400" />Alerts ({alerts.length}){criticalAlerts.length > 0 && <span className="text-xs bg-red-500 text-white px-2 py-0.5 rounded-full">{criticalAlerts.length} critical</span>}</h3>
+            {alerts.length > 1 && <button onClick={onDismissAll} className={`text-xs ${theme.textMuted} hover:${theme.text} transition-colors`}>Dismiss all</button>}
+          </div>
+          <div className="space-y-2 max-h-48 overflow-y-auto">
+            {alerts.map(alert => (
+              <div key={alert.id} className={`flex items-start gap-3 p-3 rounded-lg border ${severityStyles[alert.severity].bg} animate-slide-down`}>
+                <span className="text-base flex-shrink-0">{alert.icon}</span>
+                <div className="flex-1 min-w-0"><p className={`text-sm ${theme.text}`}>{alert.message}</p><p className={`text-xs ${theme.textMuted} mt-0.5`}>{alert.timestamp.toLocaleTimeString()}</p></div>
+                <button onClick={() => onDismissAlert(alert.id)} className="flex-shrink-0 p-1 rounded-lg bg-slate-700/70 hover:bg-slate-600 text-white transition-colors" aria-label="Dismiss alert"><X className="w-3.5 h-3.5" /></button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* 3 — Quick stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard icon={<AlertCircle className="w-6 h-6" />} value={expiringOrExpired.toString()} label="Near expiry" badge={{ text: `${expiredCount} URGENT`, color: 'bg-red-500/20 text-red-400' }} theme={theme} />
+        <StatCard icon={<CheckCircle2 className="w-6 h-6 text-emerald-400" />} value={String(totalConsumed)} label="Items consumed" badge={{ text: 'TRACKED', color: 'bg-emerald-500/20 text-emerald-400' }} theme={theme} />
+        <StatCard icon={<Trash2 className="w-6 h-6 text-red-400" />} value={String(totalWasted)} label="Items wasted" badge={totalWasted > 5 ? { text: 'HIGH WASTE', color: 'bg-red-500/20 text-red-400' } : { text: 'LOW WASTE', color: 'bg-emerald-500/20 text-emerald-400' }} theme={theme} />
+        <StatCard icon={<Zap className="w-6 h-6 text-yellow-400" />} value={String(inventory.length)} label="Total items" badge={{ text: 'IN FRIDGE', color: 'bg-sky-500/20 text-sky-400' }} theme={theme} />
+      </div>
+
+      {/* 4 — Temperature control */}
+      <Card className={theme.card}>
+        <h3 className={`text-base font-bold ${theme.text} mb-4`}>Temperature control</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+          <div className="text-center">
+            <p className={`text-xs uppercase tracking-wide ${theme.textMuted} mb-1`}>Your target</p>
+            <div className="flex items-center justify-center gap-3">
+              <button onClick={() => setTargetTemp(targetTemp - 0.5)} className="p-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors active:scale-95"><Minus className="w-4 h-4" /></button>
+              <div className={`text-3xl font-bold ${theme.accent}`}>{targetTemp.toFixed(1)}°C</div>
+              <button onClick={() => setTargetTemp(targetTemp + 0.5)} className="p-2 rounded-lg bg-red-500 hover:bg-red-600 text-white transition-colors active:scale-95"><Plus className="w-4 h-4" /></button>
+            </div>
+          </div>
+          <div className="text-center">
+            <p className={`text-xs uppercase tracking-wide ${theme.textMuted} mb-1`}>Fridge is chasing</p>
+            <div className={`text-3xl font-bold ${aiAdjusted ? 'text-purple-400' : theme.accent}`}>{goalTemp.toFixed(1)}°C</div>
+            {aiAdjusted ? <p className="text-xs text-purple-400 mt-1 flex items-center justify-center gap-1"><Sparkles className="w-3 h-3" /> AI-lowered: {aiReason}</p> : <p className={`text-xs ${theme.textMuted} mt-1`}>Matches your target</p>}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 text-xs pt-3 border-t border-slate-700/30">
+          <Gauge className={`w-4 h-4 ${theme.textMuted}`} /><span className={theme.textMuted}>Cooling valve at {servoAngle}° · {doorAlarmActive ? <span className="text-red-400 font-medium">door alarm sounding</span> : sensorData.doorOpen ? 'door open' : 'door closed'}</span>
+        </div>
+      </Card>
+
+      {/* 5 — Mode */}
+      <Card className={theme.card}>
+        <h3 className={`text-base font-bold ${theme.text} mb-4 flex items-center gap-2`}><Settings className="w-4 h-4" /> Active mode</h3>
+        <div className="grid grid-cols-5 gap-2 md:gap-3">
+          {modes.map(mode => {
+            const Icon = mode.icon; const active = currentMode === mode.id;
+            return (
+              <button key={mode.id} onClick={() => setCurrentMode(mode.id)} className={`p-2 md:p-4 rounded-xl border-2 transition-all active:scale-95 ${active ? 'border-sky-500 bg-sky-500/20 shadow-lg shadow-sky-500/20' : `border-transparent ${theme.hover}`}`}>
+                <Icon className={`w-4 md:w-6 h-4 md:h-6 mx-auto mb-1 ${active ? 'text-sky-400' : theme.textMuted}`} />
+                <div className={`text-xs font-medium ${active ? theme.text : theme.textMuted}`}>{mode.name}</div>
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
+      {/* 6 — AI Analysis: real intelligence, deliberately placed after the
+          practical controls rather than being the first thing on the page */}
       <div className={`rounded-xl border p-4 space-y-4 animate-fade-in ${darkMode ? 'bg-purple-950/20 border-purple-500/30' : 'bg-purple-50/60 border-purple-200'}`}>
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
@@ -153,7 +213,7 @@ export function DashboardView({
         )}
       </div>
 
-      {/* ── AI Recommendations — separate, Gemini-powered, suggestion only ──── */}
+      {/* 7 — AI Recommendations */}
       <div className={`rounded-xl border p-4 space-y-3 animate-fade-in ${darkMode ? 'bg-purple-950/10 border-purple-500/20' : 'bg-purple-50/30 border-purple-100'}`}>
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
@@ -182,73 +242,6 @@ export function DashboardView({
           </div>
         )}
       </div>
-
-      {alerts.length > 0 && (
-        <Card className={`${theme.card} ${criticalAlerts.length > 0 ? 'border-red-500/30' : 'border-yellow-500/30'} animate-slide-down`}>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className={`font-semibold ${theme.text} flex items-center gap-2`}><Bell className="w-5 h-5 text-yellow-400" />Alerts ({alerts.length}){criticalAlerts.length > 0 && <span className="text-xs bg-red-500 text-white px-2 py-0.5 rounded-full">{criticalAlerts.length} critical</span>}</h3>
-            {alerts.length > 1 && <button onClick={onDismissAll} className={`text-xs ${theme.textMuted} hover:${theme.text} transition-colors`}>Dismiss all</button>}
-          </div>
-          <div className="space-y-2 max-h-48 overflow-y-auto">
-            {alerts.map(alert => (
-              <div key={alert.id} className={`flex items-start gap-3 p-3 rounded-lg border ${severityStyles[alert.severity].bg} animate-slide-down`}>
-                <span className="text-base flex-shrink-0">{alert.icon}</span>
-                <div className="flex-1 min-w-0"><p className={`text-sm ${theme.text}`}>{alert.message}</p><p className={`text-xs ${theme.textMuted} mt-0.5`}>{alert.timestamp.toLocaleTimeString()}</p></div>
-                <button onClick={() => onDismissAlert(alert.id)} className="flex-shrink-0 p-1 rounded-lg bg-slate-700/70 hover:bg-slate-600 text-white transition-colors" aria-label="Dismiss alert"><X className="w-3.5 h-3.5" /></button>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      <Card className={theme.card}>
-        <h3 className={`text-base font-bold ${theme.text} mb-4`}>Temperature control</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-          <div className="text-center">
-            <p className={`text-xs uppercase tracking-wide ${theme.textMuted} mb-1`}>Your target</p>
-            <div className="flex items-center justify-center gap-3">
-              <button onClick={() => setTargetTemp(targetTemp - 0.5)} className="p-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors active:scale-95"><Minus className="w-4 h-4" /></button>
-              <div className={`text-3xl font-bold ${theme.accent}`}>{targetTemp.toFixed(1)}°C</div>
-              <button onClick={() => setTargetTemp(targetTemp + 0.5)} className="p-2 rounded-lg bg-red-500 hover:bg-red-600 text-white transition-colors active:scale-95"><Plus className="w-4 h-4" /></button>
-            </div>
-          </div>
-          <div className="text-center">
-            <p className={`text-xs uppercase tracking-wide ${theme.textMuted} mb-1`}>Fridge is chasing</p>
-            <div className={`text-3xl font-bold ${aiAdjusted ? 'text-purple-400' : theme.accent}`}>{goalTemp.toFixed(1)}°C</div>
-            {aiAdjusted ? <p className="text-xs text-purple-400 mt-1 flex items-center justify-center gap-1"><Sparkles className="w-3 h-3" /> AI-lowered: {aiReason}</p> : <p className={`text-xs ${theme.textMuted} mt-1`}>Matches your target</p>}
-          </div>
-        </div>
-        <div className="flex items-center gap-2 text-xs pt-3 border-t border-slate-700/30">
-          <Gauge className={`w-4 h-4 ${theme.textMuted}`} /><span className={theme.textMuted}>Cooling valve at {servoAngle}° · {doorAlarmActive ? <span className="text-red-400 font-medium">door alarm sounding</span> : sensorData.doorOpen ? 'door open' : 'door closed'}</span>
-        </div>
-      </Card>
-
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard icon={<AlertCircle className="w-6 h-6" />} value={expiringOrExpired.toString()} label="Near expiry" badge={{ text: `${expiredCount} URGENT`, color: 'bg-red-500/20 text-red-400' }} theme={theme} />
-        <StatCard icon={<CheckCircle2 className="w-6 h-6 text-emerald-400" />} value={String(totalConsumed)} label="Items consumed" badge={{ text: 'TRACKED', color: 'bg-emerald-500/20 text-emerald-400' }} theme={theme} />
-        <StatCard icon={<Trash2 className="w-6 h-6 text-red-400" />} value={String(totalWasted)} label="Items wasted" badge={totalWasted > 5 ? { text: 'HIGH WASTE', color: 'bg-red-500/20 text-red-400' } : { text: 'LOW WASTE', color: 'bg-emerald-500/20 text-emerald-400' }} theme={theme} />
-        <StatCard icon={<Zap className="w-6 h-6 text-yellow-400" />} value={String(inventory.length)} label="Total items" badge={{ text: 'IN FRIDGE', color: 'bg-sky-500/20 text-sky-400' }} theme={theme} />
-      </div>
-
-      <Card className={theme.card}>
-        <h3 className={`text-base font-bold ${theme.text} mb-4 flex items-center gap-2`}><Settings className="w-4 h-4" /> Active mode</h3>
-        <div className="grid grid-cols-5 gap-2 md:gap-3">
-          {modes.map(mode => {
-            const Icon = mode.icon; const active = currentMode === mode.id;
-            return (
-              <button key={mode.id} onClick={() => setCurrentMode(mode.id)} className={`p-2 md:p-4 rounded-xl border-2 transition-all active:scale-95 ${active ? 'border-sky-500 bg-sky-500/20 shadow-lg shadow-sky-500/20' : `border-transparent ${theme.hover}`}`}>
-                <Icon className={`w-4 md:w-6 h-4 md:h-6 mx-auto mb-1 ${active ? 'text-sky-400' : theme.textMuted}`} />
-                <div className={`text-xs font-medium ${active ? theme.text : theme.textMuted}`}>{mode.name}</div>
-              </button>
-            );
-          })}
-        </div>
-      </Card>
-
-      <Card className={theme.card}>
-        <h3 className={`text-base font-bold ${theme.text} mb-4`}>Weekly consumption</h3>
-        <ConsumptionChart data={consumptionHistory} darkMode={darkMode} />
-      </Card>
     </div>
   );
 }

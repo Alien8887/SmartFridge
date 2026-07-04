@@ -5,7 +5,9 @@ export function formatTimestampTick(ts: number, spanMs: number): string {
   if (spanMs > 86_400_000) return d.toLocaleDateString([], { weekday: 'short', hour: '2-digit' });
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
-export function hasRealTimestamps(data: { timestamp?: number }[]): boolean { return data.some(p => p.timestamp && p.timestamp > 1_000_000); }
+export function hasRealTimestamps(data: { timestamp?: number }[]): boolean {
+  return data.some(p => p.timestamp && p.timestamp > 1_000_000);
+}
 
 function downloadFile(filename: string, content: string, mime: string) {
   const blob = new Blob([content], { type: mime });
@@ -28,27 +30,65 @@ export function exportShoppingList(items: string[]) {
 }
 
 /**
- * Simple ordinary-least-squares linear regression over the visible window,
- * projected `aheadMs` past the last real point. This is what draws the
- * dashed forecast segment on each sensor chart — a real, if intentionally
- * simple, trend projection, not a guarantee.
+ * Local quadratic (degree-2) regression fit only to the most recent ~24
+ * points, then evaluated at several future timestamps to produce a genuinely
+ * curved forecast line instead of a single straight segment. "Local" means
+ * a recent trend reversal bends the curve rather than being averaged away
+ * by the full history the way a single global linear fit would.
  */
-export function computeForecastPoint(data: ChartDataPoint[], aheadMs: number): ChartDataPoint | null {
-  const pts = data.filter(p => p.timestamp);
-  if (pts.length < 4) return null;
-  const xs = pts.map(p => p.timestamp!);
-  const ys = pts.map(p => p.value);
+export function computeForecastCurve(data: ChartDataPoint[], aheadMs: number, steps = 10): ChartDataPoint[] {
+  const windowed = data.filter(p => p.timestamp).slice(-24);
+  if (windowed.length < 5) return [];
+
+  const t0 = windowed[0].timestamp!;
+  const xs = windowed.map(p => (p.timestamp! - t0) / 60_000); // minutes since window start
+  const ys = windowed.map(p => p.value);
   const n = xs.length;
-  const xBar = xs.reduce((a, b) => a + b, 0) / n;
-  const yBar = ys.reduce((a, b) => a + b, 0) / n;
-  let num = 0, den = 0;
-  for (let i = 0; i < n; i++) { num += (xs[i] - xBar) * (ys[i] - yBar); den += (xs[i] - xBar) ** 2; }
-  const slope = den ? num / den : 0;
-  const intercept = yBar - slope * xBar;
-  const lastTs = xs[n - 1];
-  const futureTs = lastTs + aheadMs;
-  const futureVal = intercept + slope * futureTs;
-  return { time: new Date(futureTs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), value: +futureVal.toFixed(2), timestamp: futureTs, slope } as ChartDataPoint & { slope: number };
+
+  let S1 = 0, S2 = 0, S3 = 0, S4 = 0, T0 = 0, T1 = 0, T2 = 0;
+  for (let i = 0; i < n; i++) {
+    const x = xs[i], y = ys[i];
+    const x2 = x * x;
+    S1 += x; S2 += x2; S3 += x2 * x; S4 += x2 * x2;
+    T0 += y; T1 += x * y; T2 += x2 * y;
+  }
+  const S0 = n;
+
+  const det3 = (m: number[][]) =>
+    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
+    m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+    m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+
+  const M = [[S4, S3, S2], [S3, S2, S1], [S2, S1, S0]];
+  const D = det3(M);
+
+  let a = 0, b = 0, c = ys[n - 1];
+  if (Math.abs(D) > 1e-9) {
+    a = det3([[T2, S3, S2], [T1, S2, S1], [T0, S1, S0]]) / D;
+    b = det3([[S4, T2, S2], [S3, T1, S1], [S2, T0, S0]]) / D;
+    c = det3([[S4, S3, T2], [S3, S2, T1], [S2, S1, T0]]) / D;
+  }
+
+  // A quadratic can extrapolate into an absurd spike quickly — clamp the
+  // curve to the recent observed range plus one range-width of headroom.
+  const yMin = Math.min(...ys), yMax = Math.max(...ys);
+  const span = Math.max(yMax - yMin, 1);
+  const lo = yMin - span, hi = yMax + span;
+
+  const lastX = xs[n - 1];
+  const lastTs = windowed[n - 1].timestamp!;
+  const aheadMin = aheadMs / 60_000;
+
+  const out: ChartDataPoint[] = [];
+  for (let i = 1; i <= steps; i++) {
+    const frac = i / steps;
+    const futureX = lastX + aheadMin * frac;
+    const futureTs = lastTs + aheadMs * frac;
+    let val = a * futureX * futureX + b * futureX + c;
+    val = Math.max(lo, Math.min(hi, val));
+    out.push({ time: new Date(futureTs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), value: +val.toFixed(2), timestamp: futureTs });
+  }
+  return out;
 }
 
 export function getStalenessInfo(lastTimestamp: number | undefined, rangeMs: number): { isStale: boolean; staleLabel: string } {

@@ -1,12 +1,13 @@
-import { BarChart3, Wind, ShoppingCart, Lightbulb, UserCircle, CalendarDays, LucideIcon } from 'lucide-react';
+import { BarChart3, Wind, ShoppingCart, Lightbulb, UserCircle, CalendarDays, ShieldCheck, LucideIcon } from 'lucide-react';
 
 export const HEADER_HEIGHT = '72px';
 
 export interface NavItem {
-  id: 'dashboard' | 'environment' | 'inventory' | 'suggestions' | 'calendar' | 'profile';
+  id: 'dashboard' | 'environment' | 'inventory' | 'suggestions' | 'calendar' | 'profile' | 'admin';
   label: string;
   icon: LucideIcon;
   description: string;
+  adminOnly?: boolean;
 }
 
 export const NAV_ITEMS: NavItem[] = [
@@ -16,6 +17,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'suggestions', label: 'Suggestions', icon: Lightbulb,    description: 'Smart tips and meal ideas' },
   { id: 'calendar',    label: 'Calendar',    icon: CalendarDays, description: 'Plan meals and calories'   },
   { id: 'profile',     label: 'Profile',     icon: UserCircle,   description: 'Account and device'        },
+  { id: 'admin',       label: 'Admin',       icon: ShieldCheck,  description: 'All accounts', adminOnly: true },
 ];
 
 export const getNavItem = (id: string): NavItem | undefined => NAV_ITEMS.find(item => item.id === id);

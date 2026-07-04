@@ -2,7 +2,7 @@ import React, { useId, useState, useEffect } from 'react';
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Sparkles } from 'lucide-react';
 import { ChartDataPoint } from '../../types';
-import { formatTimestampTick, hasRealTimestamps, exportChartCSV, computeForecastPoint, getStalenessInfo } from '../../utils/chartUtils';
+import { formatTimestampTick, hasRealTimestamps, exportChartCSV, computeForecastCurve, getStalenessInfo } from '../../utils/chartUtils';
 import { ExportButton } from '../ui/ExportButton';
 
 interface TempChartProps { data: ChartDataPoint[]; darkMode: boolean; rangeMs?: number; }
@@ -22,11 +22,16 @@ export function TempChart({ data, darkMode, rangeMs = 3_600_000 }: TempChartProp
 
   const staleMs = realTs && last.timestamp ? Date.now() - last.timestamp : 0;
   const forecastAheadMs = Math.min(Math.max(staleMs, 10 * 60_000), 30 * 60_000);
-  const forecastPoint = realTs && showForecast ? computeForecastPoint(data, forecastAheadMs) : null;
+  const forecastCurve = realTs && showForecast ? computeForecastCurve(data, forecastAheadMs, 10) : [];
 
   const combined = realTs
-    ? [...data.map(p => ({ ...p, forecastValue: null as number | null })),
-       ...(forecastPoint ? [{ ...last, forecastValue: last.value }, { time: forecastPoint.time, timestamp: forecastPoint.timestamp, value: null, forecastValue: forecastPoint.value }] : [])]
+    ? [
+        ...data.map(p => ({ ...p, forecastValue: null as number | null })),
+        ...(forecastCurve.length > 0 ? [
+          { ...last, forecastValue: last.value },
+          ...forecastCurve.map(p => ({ time: p.time, timestamp: p.timestamp, value: null, forecastValue: p.value })),
+        ] : []),
+      ]
     : data.map(p => ({ ...p, forecastValue: null as number | null }));
 
   const axisColor = darkMode ? '#94a3b8' : '#64748b';
@@ -35,7 +40,6 @@ export function TempChart({ data, darkMode, rangeMs = 3_600_000 }: TempChartProp
   return (
     <div>
       <div className="flex justify-between items-center mb-2">
-        {/* Explicit AI opt-in, per-chart — purple, since this is the only AI element here */}
         <button onClick={() => setShowForecast(s => !s)} className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg transition-colors ${showForecast ? 'bg-purple-600 text-white' : 'bg-purple-500/15 text-purple-400 hover:bg-purple-500/25'}`}>
           <Sparkles className="w-3 h-3" /> {showForecast ? 'Hide prediction' : 'Predict'}
         </button>
@@ -59,7 +63,7 @@ export function TempChart({ data, darkMode, rangeMs = 3_600_000 }: TempChartProp
       </ResponsiveContainer>
       <p className={`text-xs mt-1 ${isStale ? 'text-amber-400' : darkMode ? 'text-slate-500' : 'text-slate-400'}`}>
         {isStale ? `⚠ No new data for ${staleLabel}.` : `Last reading: ${realTs && last.timestamp ? new Date(last.timestamp).toLocaleTimeString() : last.time}`}
-        {showForecast && ' — dashed line is a simple trend projection, not a guarantee.'}
+        {showForecast && ' — dashed curve is a local quadratic trend fit, not a guarantee.'}
       </p>
     </div>
   );

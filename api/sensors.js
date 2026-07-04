@@ -50,7 +50,8 @@ module.exports = async function handler(req, res) {
       doorOpen: isOpen, doorOpenedAt, lastOpenDurationSec,
       servoAngle: typeof servoAngle === 'number' ? servoAngle : (prev.servoAngle ?? 90),
       targetTemp: typeof targetTemp === 'number' ? Math.max(0, Math.min(10, targetTemp)) : (prev.targetTemp ?? 4),
-      doorOpenCount: prev.doorOpenCount, energyLost: prev.energyLost,
+      doorOpenCount: prev.doorOpenCount ?? 0,
+      energyLost: prev.energyLost ?? 0,
       dhtOK: typeof dhtOK === 'boolean' ? dhtOK : (prev.dhtOK ?? null),
       hxOK: typeof hxOK === 'boolean' ? hxOK : (prev.hxOK ?? null),
       rssi: typeof rssi === 'number' ? rssi : (prev.rssi ?? null),
@@ -62,7 +63,10 @@ module.exports = async function handler(req, res) {
   }
 
   if (req.method === 'GET') {
-    const data = (await redis.get(key)) || { targetTemp: 4 };
+    // Explicit complete shape even for an account that's never connected a
+    // device — a missing energyLost field previously let the frontend keep
+    // whatever OTHER account's total it had last displayed.
+    const data = (await redis.get(key)) || { targetTemp: 4, energyLost: 0, doorOpenCount: 0 };
     const lastSeenNum = typeof data.lastSeen === 'number' && Number.isFinite(data.lastSeen) ? data.lastSeen : 0;
     const connected = lastSeenNum > 0 && (Date.now() - lastSeenNum) < CONFIDENCE_MS;
 
@@ -72,7 +76,12 @@ module.exports = async function handler(req, res) {
     let aiReason = null;
     if (aiGoal && Date.now() - aiGoal.computedAt < AI_GOAL_TTL_MS && aiGoal.recommendedTemp < goalTemp - AI_MARGIN) { goalTemp = aiGoal.recommendedTemp; aiAdjusted = true; aiReason = aiGoal.reason; }
 
-    return res.status(200).json({ ...data, goalTemp: +goalTemp.toFixed(1), aiAdjusted, aiReason, connected });
+    return res.status(200).json({
+      ...data,
+      energyLost: data.energyLost ?? 0,
+      doorOpenCount: data.doorOpenCount ?? 0,
+      goalTemp: +goalTemp.toFixed(1), aiAdjusted, aiReason, connected,
+    });
   }
 
   return res.status(405).json({ error: 'Method not allowed' });

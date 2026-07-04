@@ -25,6 +25,31 @@ module.exports = async function handler(req, res) {
   const action = req.query.action;
 
   try {
+
+
+    if (action === 'admin-users' && req.method === 'GET') {
+      const session = await getSession(req);
+      if (!session) return res.status(401).json({ error: 'Unauthorized' });
+      const requester = await redis.get(`user:${session.username}`);
+      if (!requester || requester.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+
+      const keys = await redis.keys('user:*');
+      if (!keys || keys.length === 0) return res.status(200).json({ users: [] });
+      const values = await redis.mget(...keys);
+      const users = keys.map((k, i) => {
+        const u = values[i];
+        if (!u) return null;
+        // Never include passwordHash or deviceToken value — only whether one exists.
+        return {
+          username: u.username, role: u.role || 'user', createdAt: u.createdAt || null,
+          hasDevice: Boolean(u.deviceToken), fridgeModel: u.fridgeModel || '', householdSize: u.householdSize ?? null,
+        };
+      }).filter(Boolean);
+      users.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      return res.status(200).json({ users });
+    }
+
+    
     if (action === 'login' && req.method === 'POST') {
       const { username, password } = req.body || {};
       if (!username || !password) return res.status(400).json({ error: 'Username and password required' });

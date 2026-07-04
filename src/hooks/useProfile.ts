@@ -9,10 +9,10 @@ export interface ProfileData {
   dailyCalorieGoal: number | null;
 }
 
-export function useProfile(token: string) {
+export function useProfile(token: string, username: string) {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
-  const fetchedRef = useRef(false);
+  const loadedForUser = useRef<string | null>(null);
 
   const refetch = useCallback(async () => {
     if (!token) { setLoading(false); return; }
@@ -23,11 +23,15 @@ export function useProfile(token: string) {
   }, [token]);
 
   useEffect(() => {
-    if (!token) { setLoading(false); return; }
-    if (fetchedRef.current) return;
-    fetchedRef.current = true;
+    if (!username) { setProfile(null); setLoading(false); return; }
+    if (loadedForUser.current === username) return;
+    loadedForUser.current = username;
+    // Clear the PREVIOUS account's data immediately — including its role,
+    // which is what made the admin tag look shared between accounts.
+    setProfile(null);
+    setLoading(true);
     refetch();
-  }, [token, refetch]);
+  }, [username, refetch]);
 
   const updateFridgeInfo = useCallback(async (updates: Partial<Pick<ProfileData, 'fridgeModel' | 'fridgeCapacityLiters' | 'householdSize' | 'dietaryPreferences' | 'dailyCalorieGoal'>>) => {
     if (!token) return false;

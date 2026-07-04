@@ -3,7 +3,6 @@ import { SensorData, ChartDataPoint, EnergyData } from '../types';
 
 const BASE = process.env.REACT_APP_API_URL || '';
 const POLL_MS = 2000;
-// const CONF_MS = 30_000;
 const MAX_PTS = 5_000;
 const DOOR_ALARM_S = 30;
 const UPLOAD_MS = 60_000;
@@ -50,22 +49,24 @@ export function useESP32Sensors(onAlert: (message: string) => void, token: strin
   const humBufRef = useRef<ChartDataPoint[]>([]);
   const pressBufRef = useRef<ChartDataPoint[]>([]);
   const seededForUserRef = useRef<string | null>(null);
-  // Wins any GET-driven overwrite of targetTemp for a few seconds after a local
-  // change — this is what fixes "setting 5° falls back to 4°."
   const targetTempSetAtRef = useRef(0);
 
   useEffect(() => { onAlertRef.current = onAlert; }, [onAlert]);
 
-  // Load THIS user's cached history + seed from server, clearing on account switch
   useEffect(() => {
-    if (!username) { setTempH([]); setHumH([]); setPressH([]); setEnergyH([]); return; }
+    if (!username) { setTempH([]); setHumH([]); setPressH([]); setEnergyH([]); setTotalEnergyLost(0); return; }
     if (seededForUserRef.current === username) return;
     seededForUserRef.current = username;
     setTempH(loadLocal(username, 'sf-temp'));
     setHumH(loadLocal(username, 'sf-humidity'));
     setPressH(loadLocal(username, 'sf-pressure'));
     setEnergyH(loadLocal(username, 'sf-energy'));
+    // Reset both the "seen first reading" flag AND the visible number right
+    // away — otherwise the previous account's total stays on screen until
+    // the next poll happens to resolve.
     energyInitRef.current = false;
+    prevEnergyRef.current = 0;
+    setTotalEnergyLost(0);
     if (!token) return;
     (async () => {
       const [t, h, p] = await Promise.all([seedFromServer('temp', token), seedFromServer('humidity', token), seedFromServer('pressure', token)]);
@@ -112,8 +113,6 @@ export function useESP32Sensors(onAlert: (message: string) => void, token: strin
           return newData;
         });
 
-        // Only trust the server's targetTemp if we haven't just set it ourselves —
-        // see targetTempSetAtRef comment above.
         if (Date.now() - targetTempSetAtRef.current > TARGET_TEMP_GRACE_MS) {
           setTargetTempState(typeof d.targetTemp === 'number' ? d.targetTemp : 4);
         }
@@ -130,14 +129,24 @@ export function useESP32Sensors(onAlert: (message: string) => void, token: strin
           uptimeSec: typeof d.uptimeSec === 'number' ? d.uptimeSec : null,
         });
 
-        if (typeof d.energyLost === 'number') {
-          if (!energyInitRef.current) { energyInitRef.current = true; prevEnergyRef.current = d.energyLost; setTotalEnergyLost(d.energyLost); }
-          else if (d.energyLost !== prevEnergyRef.current) {
-            prevEnergyRef.current = d.energyLost;
-            setTotalEnergyLost(d.energyLost);
+        // Always resolves to a real number now — previously this whole block
+        // was skipped when a brand-new account's sensors record had no
+        // energyLost field at all, leaving the PREVIOUS account's total
+        // stuck on screen indefinitely.
+        const incomingEnergy = typeof d.energyLost === 'number' ? d.energyLost : 0;
+        if (!energyInitRef.current) {
+          energyInitRef.current = true;
+          prevEnergyRef.current = incomingEnergy;
+          setTotalEnergyLost(incomingEnergy);
+        } else if (incomingEnergy !== prevEnergyRef.current) {
+          const increased = incomingEnergy > prevEnergyRef.current;
+          prevEnergyRef.current = incomingEnergy;
+          setTotalEnergyLost(incomingEnergy);
+          if (increased) {
             const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            const pt: EnergyData = { time: t, usage: d.energyLost, doorOpens: d.doorOpenCount ?? 0, timestamp: Date.now() };
+            const pt: EnergyData = { time: t, usage: incomingEnergy, doorOpens: d.doorOpenCount ?? 0, timestamp: Date.now() };
             setEnergyH(prev => { const u = [...prev, pt].slice(-MAX_PTS); saveLocal(username, 'sf-energy', u); return u; });
+            onAlertRef.current('🚪 Door opened — energy cost recorded');
           }
         }
 
@@ -157,7 +166,9 @@ export function useESP32Sensors(onAlert: (message: string) => void, token: strin
           setPressH(p => { const u = [...p, pp].slice(-MAX_PTS); saveLocal(username, 'sf-pressure', u); return u; });
           tempBufRef.current.push(tp); humBufRef.current.push(hp); pressBufRef.current.push(pp);
         }
-      } catch { setSensorData(prev => ({ ...prev, connected: false })); }
+      } catch {
+        setSensorData(prev => ({ ...prev, connected: false }));
+      }
     };
 
     poll();
@@ -172,9 +183,9 @@ export function useESP32Sensors(onAlert: (message: string) => void, token: strin
     if (!token) return;
     try {
       const r = await fetch(`${BASE}/api/sensors`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ targetTemp: clamped }) });
-      targetTempSetAtRef.current = Date.now(); // refresh the grace window after the round trip too
+      targetTempSetAtRef.current = Date.now();
       if (r.ok) { const d = await r.json(); if (typeof d.targetTemp === 'number') setTargetTempState(d.targetTemp); }
-    } catch { /* optimistic value stands until grace window ends */ }
+    } catch { /* next poll resyncs */ }
   }, [token]);
 
   return {

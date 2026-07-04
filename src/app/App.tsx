@@ -9,6 +9,7 @@ import { SuggestionsView } from '../features/suggestions/SuggestionsView';
 import { EnvironmentView } from '../features/environment/EnvironmentView';
 import { CalendarView } from '../features/calendar/CalendarView';
 import { ProfileView } from '../features/profile/ProfileView';
+import { AdminView } from '../features/admin/AdminView';
 import { useTheme } from '../hooks/useTheme';
 import { useAuth } from '../hooks/useAuth';
 import { useESP32Sensors } from '../hooks/useESP32Sensors';
@@ -19,6 +20,7 @@ import { useMLPredictions } from '../hooks/useMLPredictions';
 import { usePreferences } from '../hooks/usePreferences';
 import { useProfile } from '../hooks/useProfile';
 import { useCalendar } from '../hooks/useCalendar';
+import { Product } from '../types';
 
 function App() {
   const { user, loading: authLoading, error: authError, setError: setAuthError, login, register, logout } = useAuth();
@@ -26,7 +28,7 @@ function App() {
 
   const token = user?.token ?? '';
   const username = user?.username ?? '';
-  const isGuest = username === 'guest' || user?.role === 'guest';
+  const role = user?.role ?? 'user';
 
   const { alerts, addAlert, analyzeSensor, dismissAlert, dismissAll } = useAlerts();
   const {
@@ -38,9 +40,10 @@ function App() {
 
   const { inventory, loading: invLoading, addProduct, consumeItem, wasteItem, resetInventory } = useInventory(token, username);
   const { consumptionHistory, logItem, totalConsumed, totalWasted, topItems, resetStats } = useConsumption(token, username);
-  const { ml, advice, loading: mlLoading, aiLoading, mlUpdatedAt, adviceUpdatedAt, runPredictions, getAIAdvice } = useMLPredictions(token);
-  const { ratings, rateRecipe } = usePreferences(token);
-  const { profile, loading: profileLoading, updateFridgeInfo } = useProfile(token);
+  // Both now take username — this is what the build error was missing.
+  const { ml, advice, loading: mlLoading, aiLoading, mlUpdatedAt, adviceUpdatedAt, runPredictions, getAIAdvice } = useMLPredictions(token, username);
+  const { ratings, rateRecipe } = usePreferences(token, username);
+  const { profile, loading: profileLoading, updateFridgeInfo } = useProfile(token, username);
   const { calendar, loading: calendarLoading, setMeal } = useCalendar(token, username);
 
   const [activeView, setActiveView] = useState('dashboard');
@@ -85,7 +88,7 @@ function App() {
     logItem(item.name, item.category, 'waste', wastedAmount);
   }, [inventory, wasteItem, logItem]);
 
-  const handleAddProduct = useCallback((p: Parameters<typeof addProduct>[0], amt: number, unit: string) => addProduct(p, amt, unit), [addProduct]);
+  const handleAddProduct = useCallback((p: Product, amt: number, unit: string) => addProduct(p, amt, unit), [addProduct]);
 
   if (authLoading) return <div className={`min-h-screen ${theme.bg} flex items-center justify-center`}><div className="w-10 h-10 rounded-full border-4 border-sky-500 border-t-transparent animate-spin" /></div>;
 
@@ -111,7 +114,7 @@ function App() {
                 <input type="text" value={loginUsername} onChange={e => { setLoginUser(e.target.value); setAuthError(null); }} onKeyDown={e => e.key === 'Enter' && login(loginUsername, loginPassword)} placeholder="Username" autoComplete="username" className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all ${darkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-500'}`} />
                 <input type="password" value={loginPassword} onChange={e => { setLoginPass(e.target.value); setAuthError(null); }} onKeyDown={e => e.key === 'Enter' && login(loginUsername, loginPassword)} placeholder="Password" autoComplete="current-password" className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all ${darkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-500'}`} />
                 <button onClick={() => login(loginUsername, loginPassword)} className="w-full py-3 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white rounded-xl font-semibold transition-all active:scale-95 shadow-lg shadow-sky-500/20">Sign in</button>
-                <div className={`p-3 rounded-xl text-xs space-y-0.5 ${darkMode ? 'bg-slate-700/50' : 'bg-slate-100'}`}><p className={`font-semibold ${theme.textMuted} mb-1`}>Default accounts:</p><p className={theme.textMuted}>admin / admin123 · user / user123 · guest / guest (read-only)</p></div>
+                <div className={`p-3 rounded-xl text-xs space-y-0.5 ${darkMode ? 'bg-slate-700/50' : 'bg-slate-100'}`}><p className={`font-semibold ${theme.textMuted} mb-1`}>Default accounts:</p><p className={theme.textMuted}>admin / admin123 · user / user123 · guest / guest</p></div>
               </>
             ) : (
               <>
@@ -132,7 +135,7 @@ function App() {
         return (
           <DashboardView
             sensorData={sensorData} alerts={alerts} inventory={inventory}
-            consumptionHistory={consumptionHistory} totalConsumed={totalConsumed} totalWasted={totalWasted}
+            totalConsumed={totalConsumed} totalWasted={totalWasted}
             currentMode={currentMode} setCurrentMode={setCurrentMode}
             targetTemp={targetTemp} goalTemp={goalTemp} aiAdjusted={aiAdjusted} aiReason={aiReason}
             servoAngle={servoAngle} doorAlarmActive={doorAlarmActive} setTargetTemp={setTargetTemp} isConnected={isConnected}
@@ -140,11 +143,11 @@ function App() {
             onRunPredictions={() => runPredictions(sensorData.temperature, sensorData.humidity, inventory, true)}
             onGetAdvice={() => getAIAdvice(sensorData.temperature, sensorData.humidity, inventory, doorOpenCount)}
             onDismissAlert={dismissAlert} onDismissAll={dismissAll}
-            token={token} darkMode={darkMode} theme={theme}
+            darkMode={darkMode} theme={theme}
           />
         );
       case 'inventory':
-        return <InventoryView inventory={inventory} loading={invLoading} topItems={topItems} onAddProduct={handleAddProduct} onConsume={handleConsume} onWaste={handleWaste} readOnly={isGuest} darkMode={darkMode} theme={theme} />;
+        return <InventoryView inventory={inventory} loading={invLoading} topItems={topItems} onAddProduct={handleAddProduct} onConsume={handleConsume} onWaste={handleWaste} darkMode={darkMode} theme={theme} />;
       case 'suggestions':
         return <SuggestionsView inventory={inventory} onAddProduct={handleAddProduct} onConsume={handleConsume} ratings={ratings} onRate={rateRecipe} dietaryPreferences={profile?.dietaryPreferences ?? []} darkMode={darkMode} theme={theme} />;
       case 'environment':
@@ -159,9 +162,11 @@ function App() {
           />
         );
       case 'calendar':
-        return <CalendarView calendar={calendar} loading={calendarLoading} onSetMeal={setMeal} dailyCalorieGoal={profile?.dailyCalorieGoal ?? null} darkMode={darkMode} theme={theme} />;
+        return <CalendarView calendar={calendar} loading={calendarLoading} onSetMeal={setMeal} dailyCalorieGoal={profile?.dailyCalorieGoal ?? null} consumptionHistory={consumptionHistory} darkMode={darkMode} theme={theme} />;
       case 'profile':
         return <ProfileView token={token} username={username} darkMode={darkMode} theme={theme} profile={profile} profileLoading={profileLoading} onUpdateFridgeInfo={updateFridgeInfo} onResetInventory={resetInventory} onResetStats={resetStats} />;
+      case 'admin':
+        return role === 'admin' ? <AdminView token={token} darkMode={darkMode} theme={theme} /> : null;
       default: return null;
     }
   };
@@ -170,8 +175,8 @@ function App() {
     <div className={`min-h-screen ${theme.bg} transition-colors duration-500`}>
       <Header username={username} role={user.role} darkMode={darkMode} setDarkMode={setDarkMode} onLogout={logout} mobileMenuOpen={mobileOpen} setMobileMenuOpen={setMobileOpen} isConnected={isConnected} theme={theme} />
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-8 flex gap-4 md:gap-6">
-        <Sidebar activeView={activeView} setActiveView={setActiveView} theme={theme} darkMode={darkMode} />
-        <MobileMenu isOpen={mobileOpen} activeView={activeView} setActiveView={setActiveView} onClose={() => setMobileOpen(false)} theme={theme} darkMode={darkMode} />
+        <Sidebar activeView={activeView} setActiveView={setActiveView} theme={theme} darkMode={darkMode} role={role} />
+        <MobileMenu isOpen={mobileOpen} activeView={activeView} setActiveView={setActiveView} onClose={() => setMobileOpen(false)} theme={theme} darkMode={darkMode} role={role} />
         <main className="flex-1 min-w-0 space-y-4 md:space-y-6">{renderView()}</main>
       </div>
     </div>

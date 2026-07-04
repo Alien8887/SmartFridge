@@ -2,7 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, Plus, X, Coffee, Sun, Moon } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Modal } from '../../components/ui/Modal';
-import { Theme } from '../../types';
+import { ConsumptionChart } from '../../components/charts/ConsumptionChart';
+import { Theme, ConsumptionData } from '../../types';
 import { recipes, Recipe } from '../../data/demoMeals';
 import { CalendarData, MealSlot } from '../../hooks/useCalendar';
 import { startOfWeek, addDays, toDateKey, formatDayLabel, isToday } from '../../utils/dateUtils';
@@ -12,6 +13,7 @@ interface CalendarViewProps {
   loading: boolean;
   onSetMeal: (date: string, meal: MealSlot, recipeId: string | null) => void;
   dailyCalorieGoal: number | null;
+  consumptionHistory: ConsumptionData[];
   darkMode: boolean;
   theme: Theme;
 }
@@ -24,7 +26,7 @@ const MEAL_META: Record<MealSlot, { label: string; icon: typeof Coffee; activeBg
 
 function recipeById(id: string | null): Recipe | undefined { return id ? recipes.find(r => r.id === id) : undefined; }
 
-export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, darkMode, theme }: CalendarViewProps) {
+export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, consumptionHistory, darkMode, theme }: CalendarViewProps) {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [pickerTarget, setPickerTarget] = useState<{ date: string; meal: MealSlot } | null>(null);
 
@@ -98,6 +100,13 @@ export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, d
           })}
         </div>
       )}
+
+      {/* Moved here from the Dashboard — belongs with meal planning, not the
+          live fridge-status overview. */}
+      <Card className={theme.card}>
+        <h3 className={`text-base font-bold ${theme.text} mb-4`}>Weekly consumption</h3>
+        <ConsumptionChart data={consumptionHistory} darkMode={darkMode} />
+      </Card>
 
       {pickerTarget && (
         <Modal isOpen title={`Choose a recipe — ${MEAL_META[pickerTarget.meal].label}`} onClose={() => setPickerTarget(null)} theme={theme}>
