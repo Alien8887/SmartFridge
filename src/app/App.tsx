@@ -10,6 +10,7 @@ import { EnvironmentView } from '../features/environment/EnvironmentView';
 import { CalendarView } from '../features/calendar/CalendarView';
 import { ProfileView } from '../features/profile/ProfileView';
 import { AdminView } from '../features/admin/AdminView';
+import { AIChatWidget } from '../components/ui/AIChatWidget';
 import { useTheme } from '../hooks/useTheme';
 import { useAuth } from '../hooks/useAuth';
 import { useESP32Sensors } from '../hooks/useESP32Sensors';
@@ -20,6 +21,7 @@ import { useMLPredictions } from '../hooks/useMLPredictions';
 import { usePreferences } from '../hooks/usePreferences';
 import { useProfile } from '../hooks/useProfile';
 import { useCalendar } from '../hooks/useCalendar';
+import { getModeEffect } from '../data/modeEffects';
 import { Product } from '../types';
 
 function App() {
@@ -33,59 +35,65 @@ function App() {
   const { alerts, addAlert, analyzeSensor, dismissAlert, dismissAll } = useAlerts();
   const {
     sensorData, temperatureHistory, humidityHistory, pressureHistory, energyHistory,
-    targetTemp, goalTemp, aiAdjusted, aiReason, servoAngle,
+    targetTemp, goalTemp, aiAdjusted, aiReason, modeAdjusted, modeOffsetApplied, servoAngle,
     doorOpenCount, totalEnergyLost, doorAlarmActive, lastOpenDurationSec, diagnostics,
-    setTargetTemp, isConnected,
+    setTargetTemp, setMode, isConnected,
   } = useESP32Sensors(addAlert, token, username);
 
   const { inventory, loading: invLoading, addProduct, consumeItem, wasteItem, resetInventory } = useInventory(token, username);
   const { consumptionHistory, logItem, totalConsumed, totalWasted, topItems, resetStats } = useConsumption(token, username);
-  // Both now take username — this is what the build error was missing.
   const { ml, advice, loading: mlLoading, aiLoading, mlUpdatedAt, adviceUpdatedAt, runPredictions, getAIAdvice } = useMLPredictions(token, username);
   const { ratings, rateRecipe } = usePreferences(token, username);
-  const { profile, loading: profileLoading, updateFridgeInfo } = useProfile(token, username);
+  const { profile, loading: profileLoading, updateFridgeInfo, logoutAllSessions, deleteAccount, exportData } = useProfile(token, username);
   const { calendar, loading: calendarLoading, setMeal } = useCalendar(token, username);
 
   const [activeView, setActiveView] = useState('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
   const [currentMode, setCurrentModeState] = useState(() => { try { return localStorage.getItem('current-mode') || 'normal'; } catch { return 'normal'; } });
-  const setCurrentMode = useCallback((id: string) => { setCurrentModeState(id); try { localStorage.setItem('current-mode', id); } catch { /* ignore */ } }, []);
+  const modeEffect = getModeEffect(currentMode);
 
-  const [loginUsername, setLoginUser] = useState('');
-  const [loginPassword, setLoginPass] = useState('');
-  const [regUsername, setRegUser] = useState('');
-  const [regPassword, setRegPass] = useState('');
-  const [regSuccess, setRegSuccess] = useState('');
-  const [showRegister, setShowReg] = useState(false);
+  const setCurrentMode = useCallback((id: string) => {
+    setCurrentModeState(id);
+    try { localStorage.setItem('current-mode', id); } catch { /* ignore */ }
+    setMode(id, getModeEffect(id).tempOffsetC);
+  }, [setMode]);
+
+  const [loginUsername, setLoginUser] = useState(''); const [loginPassword, setLoginPass] = useState('');
+  const [regUsername, setRegUser] = useState(''); const [regPassword, setRegPass] = useState('');
+  const [regSuccess, setRegSuccess] = useState(''); const [showRegister, setShowReg] = useState(false);
 
   useEffect(() => { if (sensorData.connected) analyzeSensor(sensorData); }, [sensorData, analyzeSensor]);
+
+  // Pushes the current mode's offset to the server once a token exists —
+  // covers page refresh, where currentMode is restored from localStorage
+  // before the server has any idea what mode is active.
+  useEffect(() => {
+    if (!token) return;
+    setMode(currentMode, modeEffect.tempOffsetC);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   useEffect(() => {
     if (!isConnected || !token) return;
     runPredictions(sensorData.temperature, sensorData.humidity, inventory);
-    const id = setInterval(() => runPredictions(sensorData.temperature, sensorData.humidity, inventory), 300_000);
+    const id = setInterval(() => runPredictions(sensorData.temperature, sensorData.humidity, inventory), 300_000 * modeEffect.pollIntervalMultiplier);
     return () => clearInterval(id);
-  }, [isConnected, token, sensorData.temperature, sensorData.humidity, inventory, runPredictions]);
+  }, [isConnected, token, sensorData.temperature, sensorData.humidity, inventory, runPredictions, modeEffect.pollIntervalMultiplier]);
 
   useEffect(() => {
     if (!isConnected || !token || !advice) return;
-    const id = setInterval(() => getAIAdvice(sensorData.temperature, sensorData.humidity, inventory, doorOpenCount), 600_000);
+    const id = setInterval(() => getAIAdvice(sensorData.temperature, sensorData.humidity, inventory, doorOpenCount), 600_000 * modeEffect.pollIntervalMultiplier);
     return () => clearInterval(id);
-  }, [isConnected, token, advice, sensorData.temperature, sensorData.humidity, inventory, doorOpenCount, getAIAdvice]);
+  }, [isConnected, token, advice, sensorData.temperature, sensorData.humidity, inventory, doorOpenCount, getAIAdvice, modeEffect.pollIntervalMultiplier]);
 
   const handleConsume = useCallback((id: number, amount: number) => {
-    const item = inventory.find(i => i.id === id);
-    if (!item) return;
-    consumeItem(id, amount);
-    logItem(item.name, item.category, 'consume', amount);
+    const item = inventory.find(i => i.id === id); if (!item) return;
+    consumeItem(id, amount); logItem(item.name, item.category, 'consume', amount);
   }, [inventory, consumeItem, logItem]);
 
-  const handleWaste = useCallback((id: number) => {
-    const item = inventory.find(i => i.id === id);
-    if (!item) return;
-    const wastedAmount = item.quantityAmount;
-    wasteItem(id);
-    logItem(item.name, item.category, 'waste', wastedAmount);
+  const handleWaste = useCallback((id: number, amount: number) => {
+    const item = inventory.find(i => i.id === id); if (!item) return;
+    wasteItem(id, amount); logItem(item.name, item.category, 'waste', amount);
   }, [inventory, wasteItem, logItem]);
 
   const handleAddProduct = useCallback((p: Product, amt: number, unit: string) => addProduct(p, amt, unit), [addProduct]);
@@ -114,7 +122,7 @@ function App() {
                 <input type="text" value={loginUsername} onChange={e => { setLoginUser(e.target.value); setAuthError(null); }} onKeyDown={e => e.key === 'Enter' && login(loginUsername, loginPassword)} placeholder="Username" autoComplete="username" className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all ${darkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-500'}`} />
                 <input type="password" value={loginPassword} onChange={e => { setLoginPass(e.target.value); setAuthError(null); }} onKeyDown={e => e.key === 'Enter' && login(loginUsername, loginPassword)} placeholder="Password" autoComplete="current-password" className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all ${darkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-500'}`} />
                 <button onClick={() => login(loginUsername, loginPassword)} className="w-full py-3 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white rounded-xl font-semibold transition-all active:scale-95 shadow-lg shadow-sky-500/20">Sign in</button>
-                <div className={`p-3 rounded-xl text-xs space-y-0.5 ${darkMode ? 'bg-slate-700/50' : 'bg-slate-100'}`}><p className={`font-semibold ${theme.textMuted} mb-1`}>Default accounts:</p><p className={theme.textMuted}>admin / admin123 · user / user123 · guest / guest</p></div>
+                <div className={`p-3 rounded-xl text-xs space-y-0.5 ${darkMode ? 'bg-slate-700/50' : 'bg-slate-100'}`}><p className={`font-semibold ${theme.textMuted} mb-1`}>Default accounts:</p><p className={theme.textMuted}>admin / admin123 · user / user123</p></div>
               </>
             ) : (
               <>
@@ -138,6 +146,7 @@ function App() {
             totalConsumed={totalConsumed} totalWasted={totalWasted}
             currentMode={currentMode} setCurrentMode={setCurrentMode}
             targetTemp={targetTemp} goalTemp={goalTemp} aiAdjusted={aiAdjusted} aiReason={aiReason}
+            modeAdjusted={modeAdjusted} modeOffsetApplied={modeOffsetApplied} modeBanner={modeEffect.banner}
             servoAngle={servoAngle} doorAlarmActive={doorAlarmActive} setTargetTemp={setTargetTemp} isConnected={isConnected}
             ml={ml} advice={advice} mlLoading={mlLoading} aiLoading={aiLoading} mlUpdatedAt={mlUpdatedAt} adviceUpdatedAt={adviceUpdatedAt}
             onRunPredictions={() => runPredictions(sensorData.temperature, sensorData.humidity, inventory, true)}
@@ -156,15 +165,16 @@ function App() {
             sensorData={sensorData} energyHistory={energyHistory}
             temperatureHistory={temperatureHistory} humidityHistory={humidityHistory} pressureHistory={pressureHistory}
             targetTemp={targetTemp} goalTemp={goalTemp} aiAdjusted={aiAdjusted} aiReason={aiReason}
+            modeAdjusted={modeAdjusted} modeOffsetApplied={modeOffsetApplied}
             servoAngle={servoAngle} doorOpenCount={doorOpenCount} totalEnergyLost={totalEnergyLost}
             doorAlarmActive={doorAlarmActive} lastOpenDurationSec={lastOpenDurationSec} diagnostics={diagnostics}
             darkMode={darkMode} theme={theme}
           />
         );
       case 'calendar':
-        return <CalendarView calendar={calendar} loading={calendarLoading} onSetMeal={setMeal} dailyCalorieGoal={profile?.dailyCalorieGoal ?? null} consumptionHistory={consumptionHistory} darkMode={darkMode} theme={theme} />;
+        return <CalendarView calendar={calendar} loading={calendarLoading} onSetMeal={setMeal} dailyCalorieGoal={profile?.dailyCalorieGoal ?? null} consumptionHistory={consumptionHistory} inventory={inventory} ratings={ratings} darkMode={darkMode} theme={theme} />;
       case 'profile':
-        return <ProfileView token={token} username={username} darkMode={darkMode} theme={theme} profile={profile} profileLoading={profileLoading} onUpdateFridgeInfo={updateFridgeInfo} onResetInventory={resetInventory} onResetStats={resetStats} />;
+        return <ProfileView token={token} username={username} darkMode={darkMode} theme={theme} profile={profile} profileLoading={profileLoading} totalConsumed={totalConsumed} onUpdateFridgeInfo={updateFridgeInfo} onResetInventory={resetInventory} onResetStats={resetStats} onLogoutAllSessions={logoutAllSessions} onDeleteAccount={deleteAccount} onExportData={exportData} onLogout={logout} />;
       case 'admin':
         return role === 'admin' ? <AdminView token={token} darkMode={darkMode} theme={theme} /> : null;
       default: return null;
@@ -179,6 +189,7 @@ function App() {
         <MobileMenu isOpen={mobileOpen} activeView={activeView} setActiveView={setActiveView} onClose={() => setMobileOpen(false)} theme={theme} darkMode={darkMode} role={role} />
         <main className="flex-1 min-w-0 space-y-4 md:space-y-6">{renderView()}</main>
       </div>
+      <AIChatWidget token={token} temperature={sensorData.temperature} humidity={sensorData.humidity} inventory={inventory} currentMode={currentMode} onApplyMode={setCurrentMode} darkMode={darkMode} theme={theme} />
     </div>
   );
 }

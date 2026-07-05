@@ -25,8 +25,8 @@ module.exports = async function handler(req, res) {
   const key = `sensors:${username}`;
 
   if (req.method === 'POST') {
-    const { temperature, humidity, weight, doorOpen, servoAngle, targetTemp, dhtOK, hxOK, rssi, uptimeSec } = req.body || {};
-    const prev = (await redis.get(key)) || { doorOpenCount: 0, energyLost: 0, doorOpen: false, targetTemp: 4, doorOpenedAt: null };
+    const { temperature, humidity, weight, doorOpen, servoAngle, targetTemp, dhtOK, hxOK, rssi, uptimeSec, mode, modeOffsetC } = req.body || {};
+    const prev = (await redis.get(key)) || { doorOpenCount: 0, energyLost: 0, doorOpen: false, targetTemp: 4, doorOpenedAt: null, mode: 'normal', modeOffsetC: 0 };
 
     const isOpen = typeof doorOpen === 'boolean' ? doorOpen : prev.doorOpen;
     let doorOpenedAt = prev.doorOpenedAt ?? null;
@@ -50,6 +50,8 @@ module.exports = async function handler(req, res) {
       doorOpen: isOpen, doorOpenedAt, lastOpenDurationSec,
       servoAngle: typeof servoAngle === 'number' ? servoAngle : (prev.servoAngle ?? 90),
       targetTemp: typeof targetTemp === 'number' ? Math.max(0, Math.min(10, targetTemp)) : (prev.targetTemp ?? 4),
+      mode: typeof mode === 'string' ? mode.slice(0, 20) : (prev.mode ?? 'normal'),
+      modeOffsetC: typeof modeOffsetC === 'number' && Number.isFinite(modeOffsetC) ? Math.max(-3, Math.min(3, modeOffsetC)) : (prev.modeOffsetC ?? 0),
       doorOpenCount: prev.doorOpenCount ?? 0,
       energyLost: prev.energyLost ?? 0,
       dhtOK: typeof dhtOK === 'boolean' ? dhtOK : (prev.dhtOK ?? null),
@@ -63,24 +65,38 @@ module.exports = async function handler(req, res) {
   }
 
   if (req.method === 'GET') {
-    // Explicit complete shape even for an account that's never connected a
-    // device — a missing energyLost field previously let the frontend keep
-    // whatever OTHER account's total it had last displayed.
-    const data = (await redis.get(key)) || { targetTemp: 4, energyLost: 0, doorOpenCount: 0 };
+    const data = (await redis.get(key)) || { targetTemp: 4, energyLost: 0, doorOpenCount: 0, mode: 'normal', modeOffsetC: 0 };
     const lastSeenNum = typeof data.lastSeen === 'number' && Number.isFinite(data.lastSeen) ? data.lastSeen : 0;
     const connected = lastSeenNum > 0 && (Date.now() - lastSeenNum) < CONFIDENCE_MS;
 
+    const target = data.targetTemp ?? 4;
+    const modeOffset = data.modeOffsetC ?? 0;
+    const modeAdjustedGoal = +(target + modeOffset).toFixed(2);
+
     const aiGoal = await redis.get(`ai-goal:${username}`);
-    let goalTemp = data.targetTemp ?? 4;
+    let goalTemp = modeAdjustedGoal;
     let aiAdjusted = false;
     let aiReason = null;
-    if (aiGoal && Date.now() - aiGoal.computedAt < AI_GOAL_TTL_MS && aiGoal.recommendedTemp < goalTemp - AI_MARGIN) { goalTemp = aiGoal.recommendedTemp; aiAdjusted = true; aiReason = aiGoal.reason; }
+    let modeAdjusted = modeOffset !== 0;
+
+    // Food-safety override always wins when it asks for something colder
+    // than whatever the mode has already resolved to — a proactive or
+    // energy-saving mode preference never gets to out-rank spoilage risk.
+    if (aiGoal && Date.now() - aiGoal.computedAt < AI_GOAL_TTL_MS && aiGoal.recommendedTemp < modeAdjustedGoal - AI_MARGIN) {
+      goalTemp = aiGoal.recommendedTemp;
+      aiAdjusted = true;
+      aiReason = aiGoal.reason;
+      modeAdjusted = false;
+    }
 
     return res.status(200).json({
       ...data,
       energyLost: data.energyLost ?? 0,
       doorOpenCount: data.doorOpenCount ?? 0,
-      goalTemp: +goalTemp.toFixed(1), aiAdjusted, aiReason, connected,
+      goalTemp: +goalTemp.toFixed(1),
+      aiAdjusted, aiReason,
+      modeAdjusted, modeOffsetApplied: modeAdjusted ? modeOffset : 0,
+      connected,
     });
   }
 

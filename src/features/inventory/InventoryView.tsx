@@ -1,10 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, Search, Filter, Clock, AlertTriangle, CheckCircle, Package, Trash2, Apple } from 'lucide-react';
+import { Plus, Search, Filter, Clock, AlertTriangle, CheckCircle, Package, Apple, Trash2 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { SortMenu } from '../../components/ui/SortMenu';
-import { QuantityStepper } from '../../components/ui/QuantityStepper';
+import { UsageModal } from '../../components/ui/UsageModal';
 import { FreshnessRing } from '../../components/ui/FreshnessRing';
 import { ProductModal } from './ProductModal';
 import { InventoryItem, Product, Theme } from '../../types';
@@ -17,7 +17,7 @@ interface InventoryViewProps {
   inventory: InventoryItem[];
   onAddProduct: (product: Product, quantityAmount: number, quantityUnit: string) => void;
   onConsume: (id: number, amount: number) => void;
-  onWaste: (id: number) => void;
+  onWaste: (id: number, amount: number) => void;
   loading: boolean;
   topItems?: TopItem[];
   darkMode: boolean;
@@ -40,8 +40,7 @@ export function InventoryView({ inventory, onAddProduct, onConsume, onWaste, loa
   const [sortBy, setSortBy] = useState<SortBy>('expiry');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [activeStepperId, setActiveStepperId] = useState<number | null>(null);
-  const [confirmWasteId, setConfirmWasteId] = useState<number | null>(null);
+  const [usageTarget, setUsageTarget] = useState<{ item: InventoryItem; mode: 'use' | 'waste' } | null>(null);
 
   const filtered = useMemo(() => {
     return inventory
@@ -68,12 +67,35 @@ export function InventoryView({ inventory, onAddProduct, onConsume, onWaste, loa
     expired: inventory.filter(i => getItemStatus(i.expiry, i.addedDate) === 'expired').length,
   };
 
+  const timeline = useMemo(() => {
+    const buckets: Record<'Today' | 'Tomorrow' | 'This week', InventoryItem[]> = { Today: [], Tomorrow: [], 'This week': [] };
+    inventory.forEach(item => {
+      const d = getDaysUntilExpiry(item.expiry, item.addedDate);
+      if (d === 0) buckets.Today.push(item);
+      else if (d === 1) buckets.Tomorrow.push(item);
+      else if (d > 1 && d <= 7) buckets['This week'].push(item);
+    });
+    return buckets;
+  }, [inventory]);
+  const timelineEntries = Object.entries(timeline).filter(([, items]) => items.length > 0) as [string, InventoryItem[]][];
+
   return (
     <div className="space-y-4 md:space-y-6 animate-fade-in">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <h2 className={`text-2xl md:text-3xl font-bold ${theme.text}`}>Inventory</h2>
         <Button onClick={() => setIsModalOpen(true)} variant="primary"><Plus className="w-4 h-4" /> Add product</Button>
       </div>
+
+      {timelineEntries.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {timelineEntries.map(([label, items]) => (
+            <div key={label} className={`rounded-xl border p-3 ${label === 'Today' ? 'border-red-500/40 bg-red-500/5' : label === 'Tomorrow' ? 'border-amber-500/40 bg-amber-500/5' : `${theme.card}`}`}>
+              <p className={`text-xs font-semibold mb-1 ${label === 'Today' ? 'text-red-400' : label === 'Tomorrow' ? 'text-amber-400' : theme.textMuted}`}>{label} ({items.length})</p>
+              <p className={`text-xs ${theme.textMuted} truncate`}>{items.map(i => i.name).join(', ')}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {topItems.length > 0 && (
         <div className={`flex items-center gap-2 flex-wrap text-xs ${theme.textMuted}`}>
@@ -133,19 +155,16 @@ export function InventoryView({ inventory, onAddProduct, onConsume, onWaste, loa
                   <span className={`text-xs ${theme.textMuted}`}>({items.length})</span>
                 </div>
 
-                {/* Blocks, not rows — each item is a self-contained square-ish
-                    card showing freshness (ring) and amount at a glance. */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3">
-                  {items.map(item => {
+                  {items.map((item, i) => {
                     const status = getItemStatus(item.expiry, item.addedDate);
                     const daysLeft = getDaysUntilExpiry(item.expiry, item.addedDate);
                     const freshPct = Math.max(0, Math.min(100, (daysLeft / item.expiry) * 100));
                     const colorSet = statusColors[status];
-                    const isStepperOpen = activeStepperId === item.id;
-                    const isConfirmingWaste = confirmWasteId === item.id;
 
                     return (
-                      <div key={item.id} className={`card-hover ${theme.card} border rounded-xl p-3 flex flex-col items-center text-center ring-2 ${colorSet.ring}`}>
+                      <div key={item.id} style={{ animationDelay: `${Math.min(i, 10) * 30}ms` }}
+                        className={`card-hover ${theme.card} border rounded-xl p-3 flex flex-col items-center text-center ring-2 ${colorSet.ring} animate-fade-in`}>
                         <h4 className={`font-semibold text-sm ${theme.text} truncate w-full mb-1`} title={item.name}>{item.name}</h4>
                         <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium mb-2 ${colorSet.badge}`}>{status.charAt(0).toUpperCase() + status.slice(1)}</span>
 
@@ -156,24 +175,13 @@ export function InventoryView({ inventory, onAddProduct, onConsume, onWaste, loa
                           <p className={`text-[10px] ${theme.textMuted}`}>{daysLeft > 0 ? `${daysLeft}d left` : 'Expired'}</p>
                         </div>
 
-                        <div className="w-full mt-2">
-                          {isStepperOpen ? (
-                            <QuantityStepper max={item.quantityAmount} unit={item.quantityUnit} darkMode={darkMode}
-                              onConfirm={amt => { onConsume(item.id, amt); setActiveStepperId(null); }} onCancel={() => setActiveStepperId(null)} />
-                          ) : isConfirmingWaste ? (
-                            <div className="flex flex-col gap-1">
-                              <span className={`text-[10px] ${theme.textMuted}`}>Waste all?</span>
-                              <div className="flex gap-1">
-                                <button onClick={() => { onWaste(item.id); setConfirmWasteId(null); }} className="flex-1 px-2 py-1 rounded-md text-[10px] font-medium bg-red-500 hover:bg-red-600 text-white transition-colors">Confirm</button>
-                                <button onClick={() => setConfirmWasteId(null)} className="flex-1 px-2 py-1 rounded-md text-[10px] font-medium bg-slate-600 hover:bg-slate-500 text-white transition-colors">Cancel</button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex gap-1.5">
-                              <button onClick={() => setActiveStepperId(item.id)} title="Mark some as used" className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-medium bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors"><Apple className="w-3 h-3" /> Used</button>
-                              <button onClick={() => setConfirmWasteId(item.id)} title="Waste what's left" className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-medium bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"><Trash2 className="w-3 h-3" /> Waste</button>
-                            </div>
-                          )}
+                        <div className="w-full mt-2 flex gap-1.5">
+                          <button onClick={() => setUsageTarget({ item, mode: 'use' })} title="Mark some as used" className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-medium bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors">
+                            <Apple className="w-3 h-3" /> Used
+                          </button>
+                          <button onClick={() => setUsageTarget({ item, mode: 'waste' })} title="Waste some or all" className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-[11px] font-medium bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors">
+                            <Trash2 className="w-3 h-3" /> Waste
+                          </button>
                         </div>
                       </div>
                     );
@@ -186,6 +194,23 @@ export function InventoryView({ inventory, onAddProduct, onConsume, onWaste, loa
       )}
 
       {isModalOpen && <ProductModal onAdd={onAddProduct} onClose={() => setIsModalOpen(false)} darkMode={darkMode} theme={theme} />}
+
+      {usageTarget && (
+        <UsageModal
+          itemName={usageTarget.item.name}
+          max={usageTarget.item.quantityAmount}
+          unit={usageTarget.item.quantityUnit}
+          mode={usageTarget.mode}
+          onConfirm={amt => {
+            if (usageTarget.mode === 'use') onConsume(usageTarget.item.id, amt);
+            else onWaste(usageTarget.item.id, amt);
+            setUsageTarget(null);
+          }}
+          onClose={() => setUsageTarget(null)}
+          darkMode={darkMode}
+          theme={theme}
+        />
+      )}
     </div>
   );
 }

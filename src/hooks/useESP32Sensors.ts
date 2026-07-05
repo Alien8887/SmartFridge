@@ -29,6 +29,8 @@ export function useESP32Sensors(onAlert: (message: string) => void, token: strin
   const [goalTemp, setGoalTemp] = useState(4);
   const [aiAdjusted, setAiAdjusted] = useState(false);
   const [aiReason, setAiReason] = useState<string | null>(null);
+  const [modeAdjusted, setModeAdjusted] = useState(false);
+  const [modeOffsetApplied, setModeOffsetApplied] = useState(0);
   const [servoAngle, setServoAngle] = useState(90);
   const [doorOpenCount, setDoorOpenCount] = useState(0);
   const [totalEnergyLost, setTotalEnergyLost] = useState(0);
@@ -61,9 +63,6 @@ export function useESP32Sensors(onAlert: (message: string) => void, token: strin
     setHumH(loadLocal(username, 'sf-humidity'));
     setPressH(loadLocal(username, 'sf-pressure'));
     setEnergyH(loadLocal(username, 'sf-energy'));
-    // Reset both the "seen first reading" flag AND the visible number right
-    // away — otherwise the previous account's total stays on screen until
-    // the next poll happens to resolve.
     energyInitRef.current = false;
     prevEnergyRef.current = 0;
     setTotalEnergyLost(0);
@@ -119,6 +118,8 @@ export function useESP32Sensors(onAlert: (message: string) => void, token: strin
         setGoalTemp(typeof d.goalTemp === 'number' ? d.goalTemp : 4);
         setAiAdjusted(Boolean(d.aiAdjusted));
         setAiReason(d.aiReason ?? null);
+        setModeAdjusted(Boolean(d.modeAdjusted));
+        setModeOffsetApplied(typeof d.modeOffsetApplied === 'number' ? d.modeOffsetApplied : 0);
         setServoAngle(typeof d.servoAngle === 'number' ? d.servoAngle : 90);
         setDoorOpenCount(typeof d.doorOpenCount === 'number' ? d.doorOpenCount : 0);
         setLastOpenDurationSec(typeof d.lastOpenDurationSec === 'number' ? d.lastOpenDurationSec : null);
@@ -129,10 +130,6 @@ export function useESP32Sensors(onAlert: (message: string) => void, token: strin
           uptimeSec: typeof d.uptimeSec === 'number' ? d.uptimeSec : null,
         });
 
-        // Always resolves to a real number now — previously this whole block
-        // was skipped when a brand-new account's sensors record had no
-        // energyLost field at all, leaving the PREVIOUS account's total
-        // stuck on screen indefinitely.
         const incomingEnergy = typeof d.energyLost === 'number' ? d.energyLost : 0;
         if (!energyInitRef.current) {
           energyInitRef.current = true;
@@ -166,9 +163,7 @@ export function useESP32Sensors(onAlert: (message: string) => void, token: strin
           setPressH(p => { const u = [...p, pp].slice(-MAX_PTS); saveLocal(username, 'sf-pressure', u); return u; });
           tempBufRef.current.push(tp); humBufRef.current.push(hp); pressBufRef.current.push(pp);
         }
-      } catch {
-        setSensorData(prev => ({ ...prev, connected: false }));
-      }
+      } catch { setSensorData(prev => ({ ...prev, connected: false })); }
     };
 
     poll();
@@ -188,10 +183,15 @@ export function useESP32Sensors(onAlert: (message: string) => void, token: strin
     } catch { /* next poll resyncs */ }
   }, [token]);
 
+  const setMode = useCallback(async (modeId: string, offsetC: number) => {
+    if (!token) return;
+    try { await fetch(`${BASE}/api/sensors`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ mode: modeId, modeOffsetC: offsetC }) }); } catch { /* next poll resyncs */ }
+  }, [token]);
+
   return {
     sensorData, temperatureHistory, humidityHistory, pressureHistory, energyHistory,
-    targetTemp, goalTemp, aiAdjusted, aiReason, servoAngle,
+    targetTemp, goalTemp, aiAdjusted, aiReason, modeAdjusted, modeOffsetApplied, servoAngle,
     doorOpenCount, totalEnergyLost, doorAlarmActive, lastOpenDurationSec, diagnostics,
-    setTargetTemp, isConnected: sensorData.connected,
+    setTargetTemp, setMode, isConnected: sensorData.connected,
   };
 }

@@ -26,6 +26,30 @@ module.exports = async function handler(req, res) {
 
   try {
 
+    if (action === 'profile' && req.method === 'GET') {
+      const session = await getSession(req);
+      if (!session) return res.status(401).json({ error: 'Unauthorized' });
+      const user = await redis.get(`user:${session.username}`);
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      return res.status(200).json({
+        username: user.username, role: user.role || 'user', createdAt: user.createdAt, hasDevice: Boolean(user.deviceToken),
+        fridgeModel: user.fridgeModel || '', fridgeCapacityLiters: user.fridgeCapacityLiters ?? null,
+        householdSize: user.householdSize ?? null, dietaryPreferences: user.dietaryPreferences || [],
+        dailyCalorieGoal: user.dailyCalorieGoal ?? null, sessionExpiresAt: session.expiresAt,
+      });
+    }
+
+    if (action === 'export' && req.method === 'GET') {
+      const session = await getSession(req);
+      if (!session) return res.status(401).json({ error: 'Unauthorized' });
+      const u = session.username;
+      const [profileData, inventory, consumption, preferences, calendarData] = await Promise.all([
+        redis.get(`user:${u}`), redis.get(`inventory:${u}`), redis.get(`consumption:${u}`), redis.get(`preferences:${u}`), redis.get(`calendar:${u}`),
+      ]);
+      const safeProfile = profileData ? { username: profileData.username, role: profileData.role, createdAt: profileData.createdAt, fridgeModel: profileData.fridgeModel, householdSize: profileData.householdSize, dietaryPreferences: profileData.dietaryPreferences } : null;
+      return res.status(200).json({ exportedAt: new Date().toISOString(), profile: safeProfile, inventory: inventory || [], consumption: consumption || {}, preferences: preferences || {}, calendar: calendarData || {} });
+    }
+
 
     if (action === 'admin-users' && req.method === 'GET') {
       const session = await getSession(req);
@@ -164,6 +188,37 @@ module.exports = async function handler(req, res) {
         await redis.set(userKey, updated);
         return res.status(200).json({ success: true });
       }
+
+      if (subaction === 'logoutAllSessions') {
+        const sessionKeys = await redis.keys('session:*');
+        if (sessionKeys && sessionKeys.length > 0) {
+          const sessions = await redis.mget(...sessionKeys);
+          const toDelete = sessionKeys.filter((k, i) => sessions[i] && sessions[i].username === session.username);
+          if (toDelete.length > 0) await redis.del(...toDelete);
+        }
+        return res.status(200).json({ success: true });
+      }
+
+      if (subaction === 'deleteAccount') {
+        const { confirmUsername } = req.body || {};
+        if (confirmUsername !== session.username) return res.status(400).json({ error: 'Type your username exactly to confirm' });
+
+        const keysToDelete = [userKey, `inventory:${session.username}`, `consumption:${session.username}`, `preferences:${session.username}`, `calendar:${session.username}`, `sensors:${session.username}`, `ai-goal:${session.username}`];
+        if (user.deviceToken) keysToDelete.push(`device:${user.deviceToken}`);
+        await Promise.all(keysToDelete.map(k => redis.del(k)));
+
+        const histKeys = await redis.keys(`hist:*:${session.username}:*`);
+        if (histKeys && histKeys.length > 0) await redis.del(...histKeys);
+
+        const sessionKeys = await redis.keys('session:*');
+        if (sessionKeys && sessionKeys.length > 0) {
+          const sessions = await redis.mget(...sessionKeys);
+          const toDelete = sessionKeys.filter((k, i) => sessions[i] && sessions[i].username === session.username);
+          if (toDelete.length > 0) await redis.del(...toDelete);
+        }
+        return res.status(200).json({ success: true });
+      }
+      
       return res.status(400).json({ error: 'Unknown subaction' });
     }
 

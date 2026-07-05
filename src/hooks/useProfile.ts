@@ -6,7 +6,7 @@ export interface ProfileData {
   username: string; role: string; createdAt: number; hasDevice: boolean;
   fridgeModel: string; fridgeCapacityLiters: number | null;
   householdSize: number | null; dietaryPreferences: string[];
-  dailyCalorieGoal: number | null;
+  dailyCalorieGoal: number | null; sessionExpiresAt: number;
 }
 
 export function useProfile(token: string, username: string) {
@@ -26,8 +26,6 @@ export function useProfile(token: string, username: string) {
     if (!username) { setProfile(null); setLoading(false); return; }
     if (loadedForUser.current === username) return;
     loadedForUser.current = username;
-    // Clear the PREVIOUS account's data immediately — including its role,
-    // which is what made the admin tag look shared between accounts.
     setProfile(null);
     setLoading(true);
     refetch();
@@ -35,12 +33,36 @@ export function useProfile(token: string, username: string) {
 
   const updateFridgeInfo = useCallback(async (updates: Partial<Pick<ProfileData, 'fridgeModel' | 'fridgeCapacityLiters' | 'householdSize' | 'dietaryPreferences' | 'dailyCalorieGoal'>>) => {
     if (!token) return false;
-    try {
-      const r = await fetch(`${BASE}/api/auth?action=profile`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ subaction: 'updateFridgeInfo', ...updates }) });
-      if (r.ok) { await refetch(); return true; }
-      return false;
-    } catch { return false; }
+    try { const r = await fetch(`${BASE}/api/auth?action=profile`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ subaction: 'updateFridgeInfo', ...updates }) }); if (r.ok) { await refetch(); return true; } return false; } catch { return false; }
   }, [token, refetch]);
 
-  return { profile, loading, updateFridgeInfo, refetch };
+  const logoutAllSessions = useCallback(async () => {
+    if (!token) return false;
+    try { const r = await fetch(`${BASE}/api/auth?action=profile`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ subaction: 'logoutAllSessions' }) }); return r.ok; } catch { return false; }
+  }, [token]);
+
+  const deleteAccount = useCallback(async (confirmUsername: string): Promise<{ success: boolean; error?: string }> => {
+    if (!token) return { success: false, error: 'Not signed in' };
+    try {
+      const r = await fetch(`${BASE}/api/auth?action=profile`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ subaction: 'deleteAccount', confirmUsername }) });
+      const d = await r.json();
+      return r.ok ? { success: true } : { success: false, error: d.error || 'Failed to delete account' };
+    } catch { return { success: false, error: 'Network error' }; }
+  }, [token]);
+
+  const exportData = useCallback(async () => {
+    if (!token) return;
+    try {
+      const r = await fetch(`${BASE}/api/auth?action=export`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) return;
+      const d = await r.json();
+      const blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `smart-fridge-export-${Date.now()}.json`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch { /* ignore */ }
+  }, [token]);
+
+  return { profile, loading, updateFridgeInfo, refetch, logoutAllSessions, deleteAccount, exportData };
 }

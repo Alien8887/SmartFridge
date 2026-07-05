@@ -1,56 +1,133 @@
 import React, { useState, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Plus, X, Coffee, Sun, Moon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, X, Coffee, Sun, Moon, Sparkles, Copy, Check, ClipboardList } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Modal } from '../../components/ui/Modal';
+import { Skeleton } from '../../components/ui/Skeleton';
 import { ConsumptionChart } from '../../components/charts/ConsumptionChart';
-import { Theme, ConsumptionData } from '../../types';
+import { Theme, ConsumptionData, InventoryItem } from '../../types';
 import { recipes, Recipe } from '../../data/demoMeals';
 import { CalendarData, MealSlot } from '../../hooks/useCalendar';
 import { startOfWeek, addDays, toDateKey, formatDayLabel, isToday } from '../../utils/dateUtils';
+import { buildMatches, pickBestRecipe } from '../../utils/recipeMatching';
 
 interface CalendarViewProps {
-  calendar: CalendarData;
-  loading: boolean;
+  calendar: CalendarData; loading: boolean;
   onSetMeal: (date: string, meal: MealSlot, recipeId: string | null) => void;
-  dailyCalorieGoal: number | null;
-  consumptionHistory: ConsumptionData[];
-  darkMode: boolean;
-  theme: Theme;
+  dailyCalorieGoal: number | null; consumptionHistory: ConsumptionData[];
+  inventory: InventoryItem[]; ratings: Record<string, number>;
+  darkMode: boolean; theme: Theme;
 }
 
 const MEAL_META: Record<MealSlot, { label: string; icon: typeof Coffee; activeBg: string; iconColor: string }> = {
   breakfast: { label: 'Breakfast', icon: Coffee, activeBg: 'bg-amber-500/10 hover:bg-amber-500/20', iconColor: 'text-amber-400' },
-  lunch:     { label: 'Lunch',     icon: Sun,    activeBg: 'bg-sky-500/10 hover:bg-sky-500/20',     iconColor: 'text-sky-400'   },
-  dinner:    { label: 'Dinner',    icon: Moon,   activeBg: 'bg-indigo-500/10 hover:bg-indigo-500/20', iconColor: 'text-indigo-400' },
+  lunch: { label: 'Lunch', icon: Sun, activeBg: 'bg-sky-500/10 hover:bg-sky-500/20', iconColor: 'text-sky-400' },
+  dinner: { label: 'Dinner', icon: Moon, activeBg: 'bg-indigo-500/10 hover:bg-indigo-500/20', iconColor: 'text-indigo-400' },
 };
+const SLOTS: MealSlot[] = ['breakfast', 'lunch', 'dinner'];
 
 function recipeById(id: string | null): Recipe | undefined { return id ? recipes.find(r => r.id === id) : undefined; }
 
-export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, consumptionHistory, darkMode, theme }: CalendarViewProps) {
+interface JustFilled { slotKey: string; name: string; emoji: string; }
+
+export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, consumptionHistory, inventory, ratings, darkMode, theme }: CalendarViewProps) {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [pickerTarget, setPickerTarget] = useState<{ date: string; meal: MealSlot } | null>(null);
+  const [copySource, setCopySource] = useState<string | null>(null);
+  const [justFilled, setJustFilled] = useState<JustFilled | null>(null);
 
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
+  const matches = useMemo(() => buildMatches(inventory, ratings), [inventory, ratings]);
 
   const dayCalories = (dateKey: string): number => {
     const day = calendar[dateKey];
     if (!day) return 0;
-    return (['breakfast', 'lunch', 'dinner'] as MealSlot[]).reduce((sum, m) => sum + (recipeById(day[m])?.calories ?? 0), 0);
+    return SLOTS.reduce((sum, m) => sum + (recipeById(day[m])?.calories ?? 0), 0);
+  };
+
+  const weekStats = useMemo(() => {
+    let planned = 0, totalCalories = 0;
+    days.forEach(d => { const day = calendar[toDateKey(d)]; if (!day) return; SLOTS.forEach(m => { if (day[m]) { planned++; totalCalories += recipeById(day[m])?.calories ?? 0; } }); });
+    return { planned, totalSlots: days.length * 3, totalCalories };
+  }, [days, calendar]);
+
+  const usedRecipeIds = useMemo(() => {
+    const set = new Set<string>();
+    days.forEach(d => { const day = calendar[toDateKey(d)]; if (day) SLOTS.forEach(m => { if (day[m]) set.add(day[m]!); }); });
+    return set;
+  }, [days, calendar]);
+
+  // Preview candidate — used for BOTH the hover tooltip on the sparkle
+  // button ("what would be suggested right now") and, once clicked, the
+  // confirmation label showing the actual meal that was picked.
+  const previewSuggestion = useMemo(() => pickBestRecipe(matches, usedRecipeIds), [matches, usedRecipeIds]);
+
+  const suggestForSlot = (dateKey: string, meal: MealSlot) => {
+    const best = pickBestRecipe(matches, usedRecipeIds);
+    if (!best) return;
+    onSetMeal(dateKey, meal, best.recipe.id);
+    const slotKey = `${dateKey}-${meal}`;
+    setJustFilled({ slotKey, name: best.recipe.name, emoji: best.recipe.emoji });
+    setTimeout(() => setJustFilled(null), 1400);
+  };
+
+  const fillWeek = () => {
+    const usedThisRun = new Set(usedRecipeIds);
+    days.forEach(d => {
+      const key = toDateKey(d);
+      const day = calendar[key] || { breakfast: null, lunch: null, dinner: null };
+      SLOTS.forEach(m => {
+        if (day[m]) return;
+        const best = pickBestRecipe(matches, usedThisRun);
+        if (best) { onSetMeal(key, m, best.recipe.id); usedThisRun.add(best.recipe.id); }
+      });
+    });
+  };
+
+  const copyDayInto = (targetKey: string) => {
+    if (!copySource) return;
+    const source = calendar[copySource];
+    if (source) SLOTS.forEach(m => onSetMeal(targetKey, m, source[m]));
+    setCopySource(null);
   };
 
   return (
     <div className="space-y-4 md:space-y-6 animate-fade-in">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className={`text-2xl md:text-3xl font-bold ${theme.text}`}>Meal Calendar</h2>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={fillWeek} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors"><ClipboardList className="w-3.5 h-3.5" /> Fill week</button>
           <button onClick={() => setWeekStart(w => addDays(w, -7))} className={`p-2 rounded-lg ${theme.hover}`} aria-label="Previous week"><ChevronLeft className={`w-4 h-4 ${theme.text}`} /></button>
-          <button onClick={() => setWeekStart(startOfWeek(new Date()))} className={`px-3 py-1.5 rounded-lg text-xs font-medium ${darkMode ? 'bg-slate-700 text-slate-200 hover:bg-slate-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>This week</button>
+          <button onClick={() => setWeekStart(startOfWeek(new Date()))} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-teal-600 text-white hover:bg-teal-700 transition-colors">This week</button>
           <button onClick={() => setWeekStart(w => addDays(w, 7))} className={`p-2 rounded-lg ${theme.hover}`} aria-label="Next week"><ChevronRight className={`w-4 h-4 ${theme.text}`} /></button>
         </div>
       </div>
 
+      {copySource && (
+        <div className="animate-slide-down flex items-center justify-between bg-teal-500/10 border border-teal-500/30 rounded-xl p-3">
+          <span className="text-sm text-teal-400">Copying {formatDayLabel(new Date(copySource))} — click another day's copy icon to paste, or cancel.</span>
+          <button onClick={() => setCopySource(null)} className="text-xs px-2 py-1 rounded-lg bg-slate-600 text-white hover:bg-slate-500 transition-colors">Cancel</button>
+        </div>
+      )}
+
+      <Card className={`${theme.card} border-teal-500/20`}>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div><p className={`text-xs ${theme.textMuted}`}>Meals planned this week</p><p className={`text-lg font-bold ${theme.text}`}>{weekStats.planned} / {weekStats.totalSlots}</p></div>
+          <div className={`h-2 flex-1 min-w-[100px] rounded-full mx-4 ${darkMode ? 'bg-slate-700' : 'bg-slate-200'}`}><div className="h-full rounded-full bg-teal-500 transition-all duration-500" style={{ width: `${(weekStats.planned / weekStats.totalSlots) * 100}%` }} /></div>
+          <div className="text-right"><p className={`text-xs ${theme.textMuted}`}>Weekly calories</p><p className={`text-lg font-bold ${theme.text}`}>{weekStats.totalCalories}{dailyCalorieGoal ? ` / ${dailyCalorieGoal * 7}` : ''}</p></div>
+        </div>
+      </Card>
+
       {loading ? (
-        <Card className={theme.card}><div className="text-center py-10"><div className="w-8 h-8 mx-auto rounded-full border-4 border-sky-500 border-t-transparent animate-spin" /></div></Card>
+        <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
+          {Array.from({ length: 7 }).map((_, i) => (
+            <div key={i} className={`rounded-xl border p-3 space-y-2 ${theme.card} ${darkMode ? 'border-slate-700' : 'border-slate-200'}`}>
+              <Skeleton darkMode={darkMode} className="h-4 w-16" />
+              <Skeleton darkMode={darkMode} className="h-10 w-full" />
+              <Skeleton darkMode={darkMode} className="h-10 w-full" />
+              <Skeleton darkMode={darkMode} className="h-10 w-full" />
+            </div>
+          ))}
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
           {days.map(day => {
@@ -61,39 +138,55 @@ export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, c
             const goalPct = dailyCalorieGoal ? Math.round((calories / dailyCalorieGoal) * 100) : null;
 
             return (
-              <div key={dateKey} className={`rounded-xl border p-3 flex flex-col gap-2 animate-fade-in card-hover ${theme.card} ${today ? 'border-sky-500 ring-1 ring-sky-500/30' : darkMode ? 'border-slate-700' : 'border-slate-200'}`}>
+              <div key={dateKey} className={`rounded-xl border p-3 flex flex-col gap-2 animate-fade-in card-hover ${theme.card} ${today ? 'border-teal-500 ring-1 ring-teal-500/30' : darkMode ? 'border-slate-700' : 'border-slate-200'}`}>
                 <div className="flex items-center justify-between">
-                  <span className={`text-xs font-semibold ${today ? 'text-sky-400' : theme.textMuted}`}>{formatDayLabel(day)}</span>
-                  {today && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-500 text-white font-medium">Today</span>}
+                  <span className={`text-xs font-semibold ${today ? 'text-teal-400' : theme.textMuted}`}>{formatDayLabel(day)}</span>
+                  <div className="flex items-center gap-1">
+                    {today && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-500 text-white font-medium">Today</span>}
+                    <button onClick={() => copySource === dateKey ? setCopySource(null) : (copySource ? copyDayInto(dateKey) : setCopySource(dateKey))} title={copySource && copySource !== dateKey ? 'Paste here' : 'Copy this day'} className={`p-1 rounded-md transition-colors ${copySource === dateKey ? 'bg-teal-500 text-white' : `${theme.hover} ${theme.textMuted}`}`}>
+                      {copySource === dateKey ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                    </button>
+                  </div>
                 </div>
 
-                {(['breakfast', 'lunch', 'dinner'] as MealSlot[]).map(meal => {
+                {SLOTS.map(meal => {
                   const meta = MEAL_META[meal];
                   const Icon = meta.icon;
                   const recipe = recipeById(meals[meal]);
+                  const slotKey = `${dateKey}-${meal}`;
+                  const isJustFilled = justFilled?.slotKey === slotKey;
+
                   return (
-                    <button key={meal} onClick={() => setPickerTarget({ date: dateKey, meal })}
-                      className={`flex items-center gap-2 p-2 rounded-lg text-left transition-all ${recipe ? meta.activeBg : darkMode ? 'bg-slate-800/50 hover:bg-slate-700/50' : 'bg-slate-50 hover:bg-slate-100'}`}>
-                      <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${recipe ? meta.iconColor : theme.textMuted}`} />
-                      {recipe ? (
-                        <span className="min-w-0 flex-1">
-                          <span className={`block text-xs font-medium truncate ${theme.text}`}>{recipe.emoji} {recipe.name}</span>
-                          <span className={`block text-[10px] ${theme.textMuted}`}>{recipe.calories} kcal</span>
-                        </span>
-                      ) : (
-                        <span className={`text-xs ${theme.textMuted} flex items-center gap-1`}><Plus className="w-3 h-3" /> {meta.label}</span>
+                    <div key={meal} className="flex items-stretch gap-1">
+                      <button onClick={() => setPickerTarget({ date: dateKey, meal })}
+                        className={`flex-1 flex items-center gap-2 p-2 rounded-lg text-left transition-all min-w-0 ${recipe || isJustFilled ? meta.activeBg : darkMode ? 'bg-slate-800/50 hover:bg-slate-700/50' : 'bg-slate-50 hover:bg-slate-100'}`}>
+                        {isJustFilled ? (
+                          <span className="flex-1 flex items-center gap-1.5 text-xs font-medium text-indigo-400 animate-fade-in min-w-0">
+                            <Sparkles className="w-3.5 h-3.5 flex-shrink-0" /> <span className="truncate">Added: {justFilled!.emoji} {justFilled!.name}</span>
+                          </span>
+                        ) : recipe ? (
+                          <>
+                            <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${meta.iconColor}`} />
+                            <span className="min-w-0 flex-1"><span className={`block text-xs font-medium truncate ${theme.text}`}>{recipe.emoji} {recipe.name}</span><span className={`block text-[10px] ${theme.textMuted}`}>{recipe.calories} kcal</span></span>
+                          </>
+                        ) : (
+                          <><Icon className={`w-3.5 h-3.5 flex-shrink-0 ${theme.textMuted}`} /><span className={`text-xs ${theme.textMuted} flex items-center gap-1`}><Plus className="w-3 h-3" /> {meta.label}</span></>
+                        )}
+                      </button>
+                      {!recipe && !isJustFilled && (
+                        <button onClick={() => suggestForSlot(dateKey, meal)}
+                          title={previewSuggestion ? `Suggest: ${previewSuggestion.recipe.name}` : 'No suggestion available'}
+                          className="flex-shrink-0 px-2 rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors">
+                          <Sparkles className="w-3.5 h-3.5" />
+                        </button>
                       )}
-                    </button>
+                    </div>
                   );
                 })}
 
                 <div className={`mt-1 pt-2 border-t text-center ${darkMode ? 'border-slate-700' : 'border-slate-200'}`}>
                   <span className={`text-xs font-semibold ${theme.text}`}>{calories} kcal</span>
-                  {goalPct !== null && (
-                    <div className={`h-1 rounded-full mt-1 ${darkMode ? 'bg-slate-700' : 'bg-slate-200'}`}>
-                      <div className={`h-full rounded-full transition-all duration-500 ${goalPct > 110 ? 'bg-red-500' : goalPct > 90 ? 'bg-emerald-500' : 'bg-sky-500'}`} style={{ width: `${Math.min(100, goalPct)}%` }} />
-                    </div>
-                  )}
+                  {goalPct !== null && <div className={`h-1 rounded-full mt-1 ${darkMode ? 'bg-slate-700' : 'bg-slate-200'}`}><div className={`h-full rounded-full transition-all duration-500 ${goalPct > 110 ? 'bg-red-500' : goalPct > 90 ? 'bg-emerald-500' : 'bg-teal-500'}`} style={{ width: `${Math.min(100, goalPct)}%` }} /></div>}
                 </div>
               </div>
             );
@@ -101,8 +194,6 @@ export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, c
         </div>
       )}
 
-      {/* Moved here from the Dashboard — belongs with meal planning, not the
-          live fridge-status overview. */}
       <Card className={theme.card}>
         <h3 className={`text-base font-bold ${theme.text} mb-4`}>Weekly consumption</h3>
         <ConsumptionChart data={consumptionHistory} darkMode={darkMode} />
@@ -111,20 +202,11 @@ export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, c
       {pickerTarget && (
         <Modal isOpen title={`Choose a recipe — ${MEAL_META[pickerTarget.meal].label}`} onClose={() => setPickerTarget(null)} theme={theme}>
           <div className="space-y-2 max-h-96 overflow-y-auto">
-            {calendar[pickerTarget.date]?.[pickerTarget.meal] && (
-              <button onClick={() => { onSetMeal(pickerTarget.date, pickerTarget.meal, null); setPickerTarget(null); }}
-                className="w-full flex items-center gap-2 p-3 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-sm font-medium transition-colors">
-                <X className="w-4 h-4" /> Clear this meal
-              </button>
-            )}
+            <button onClick={() => { suggestForSlot(pickerTarget.date, pickerTarget.meal); setPickerTarget(null); }} className="w-full flex items-center gap-2 p-3 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 text-sm font-medium transition-colors"><Sparkles className="w-4 h-4" /> Suggest for me</button>
+            {calendar[pickerTarget.date]?.[pickerTarget.meal] && <button onClick={() => { onSetMeal(pickerTarget.date, pickerTarget.meal, null); setPickerTarget(null); }} className="w-full flex items-center gap-2 p-3 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-sm font-medium transition-colors"><X className="w-4 h-4" /> Clear this meal</button>}
             {recipes.map(r => (
-              <button key={r.id} onClick={() => { onSetMeal(pickerTarget.date, pickerTarget.meal, r.id); setPickerTarget(null); }}
-                className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>
-                <span className="text-xl">{r.emoji}</span>
-                <span className="flex-1 text-left">
-                  <span className={`block text-sm font-medium ${theme.text}`}>{r.name}</span>
-                  <span className={`block text-xs ${theme.textMuted}`}>{r.calories} kcal · {r.time}</span>
-                </span>
+              <button key={r.id} onClick={() => { onSetMeal(pickerTarget.date, pickerTarget.meal, r.id); setPickerTarget(null); }} className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>
+                <span className="text-xl">{r.emoji}</span><span className="flex-1 text-left"><span className={`block text-sm font-medium ${theme.text}`}>{r.name}</span><span className={`block text-xs ${theme.textMuted}`}>{r.calories} kcal · {r.time}</span></span>
               </button>
             ))}
           </div>

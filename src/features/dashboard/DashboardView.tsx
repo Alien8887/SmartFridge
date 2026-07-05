@@ -2,7 +2,7 @@ import React from 'react';
 import {
   AlertCircle, Trash2, Zap, Wifi, WifiOff, Clock, Settings, Plus, Minus,
   Bell, CheckCircle2, X, BrainCircuit, TrendingUp, TrendingDown,
-  AlertOctagon, ShieldCheck, Sparkles, Gauge,
+  AlertOctagon, ShieldCheck, Sparkles, Gauge, Info,
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { StatCard } from '../../components/ui/StatCard';
@@ -10,42 +10,28 @@ import type { EnhancedAlert } from '../../hooks/useAlerts';
 import type { MLResult, SmartAdvice } from '../../hooks/useMLPredictions';
 import { SensorData, InventoryItem, Theme } from '../../types';
 import { getItemStatus } from '../../utils/expiryUtils';
+import { formatStat } from '../../utils/numberUtils';
+import { useCountUp } from '../../hooks/useCountUp';
 import { modes } from '../../data/modes';
 
 interface DashboardViewProps {
-  sensorData: SensorData;
-  alerts: EnhancedAlert[];
-  inventory: InventoryItem[];
-  totalConsumed: number;
-  totalWasted: number;
-  currentMode: string;
-  setCurrentMode: (id: string) => void;
-  targetTemp: number;
-  goalTemp: number;
-  aiAdjusted: boolean;
-  aiReason: string | null;
-  servoAngle: number;
-  doorAlarmActive: boolean;
-  setTargetTemp: (t: number) => void;
-  isConnected: boolean;
-  ml: MLResult | null;
-  advice: SmartAdvice | null;
-  mlLoading: boolean;
-  aiLoading: boolean;
-  mlUpdatedAt: number | null;
-  adviceUpdatedAt: number | null;
-  onRunPredictions: () => void;
-  onGetAdvice: () => void;
-  onDismissAlert: (id: number) => void;
-  onDismissAll: () => void;
-  darkMode: boolean;
-  theme: Theme;
+  sensorData: SensorData; alerts: EnhancedAlert[]; inventory: InventoryItem[];
+  totalConsumed: number; totalWasted: number;
+  currentMode: string; setCurrentMode: (id: string) => void;
+  targetTemp: number; goalTemp: number; aiAdjusted: boolean; aiReason: string | null;
+  modeAdjusted: boolean; modeOffsetApplied: number; modeBanner?: string;
+  servoAngle: number; doorAlarmActive: boolean; setTargetTemp: (t: number) => void; isConnected: boolean;
+  ml: MLResult | null; advice: SmartAdvice | null; mlLoading: boolean; aiLoading: boolean;
+  mlUpdatedAt: number | null; adviceUpdatedAt: number | null;
+  onRunPredictions: () => void; onGetAdvice: () => void;
+  onDismissAlert: (id: number) => void; onDismissAll: () => void;
+  darkMode: boolean; theme: Theme;
 }
 
 const severityStyles = {
   critical: { bg: 'bg-red-500/10 border-red-500/30' },
-  warning:  { bg: 'bg-yellow-500/10 border-yellow-500/30' },
-  info:     { bg: 'bg-blue-500/10 border-blue-500/30' },
+  warning: { bg: 'bg-yellow-500/10 border-yellow-500/30' },
+  info: { bg: 'bg-blue-500/10 border-blue-500/30' },
 } as const;
 const gradeColor: Record<string, string> = { A: 'text-emerald-400', B: 'text-green-400', C: 'text-yellow-400', D: 'text-red-400' };
 const trendIcon = { rising: TrendingUp, falling: TrendingDown, stable: Minus };
@@ -60,7 +46,8 @@ function timeAgo(ts: number | null): string {
 
 export function DashboardView({
   sensorData, alerts, inventory, totalConsumed, totalWasted,
-  currentMode, setCurrentMode, targetTemp, goalTemp, aiAdjusted, aiReason, servoAngle,
+  currentMode, setCurrentMode, targetTemp, goalTemp, aiAdjusted, aiReason,
+  modeAdjusted, modeOffsetApplied, modeBanner, servoAngle,
   doorAlarmActive, setTargetTemp, isConnected,
   ml, advice, mlLoading, aiLoading, mlUpdatedAt, adviceUpdatedAt, onRunPredictions, onGetAdvice,
   onDismissAlert, onDismissAll, darkMode, theme,
@@ -71,10 +58,15 @@ export function DashboardView({
   const expiringOrExpired = inventory.filter(i => { const s = getItemStatus(i.expiry, i.addedDate); return s === 'expiring' || s === 'expired'; }).length;
   const expiredCount = inventory.filter(i => getItemStatus(i.expiry, i.addedDate) === 'expired').length;
 
+  // Count-up display values — the underlying numbers still pass through
+  // formatStat, so a fractional total still renders clean mid-animation.
+  const expiringDisplay = useCountUp(expiringOrExpired);
+  const consumedDisplay = useCountUp(totalConsumed);
+  const wastedDisplay = useCountUp(totalWasted);
+  const itemsDisplay = useCountUp(inventory.length);
+
   return (
     <div className="space-y-4 md:space-y-6 animate-fade-in">
-
-      {/* 1 — Connection status: the one thing worth knowing before anything else */}
       <Card className={`${theme.card} ${isConnected ? 'border-emerald-500/40' : 'border-red-500/40'} animate-slide-down`}>
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -87,9 +79,9 @@ export function DashboardView({
           <div className="grid grid-cols-2 md:flex md:gap-6 gap-3">
             {[
               { label: 'Temperature', val: `${sensorData.temperature.toFixed(1)}°C` },
-              { label: 'Humidity',    val: `${Math.round(sensorData.humidity)}%` },
-              { label: 'Door',        val: sensorData.doorOpen ? 'OPEN' : 'CLOSED', color: sensorData.doorOpen ? 'text-red-400' : 'text-emerald-400' },
-              { label: 'Weight',      val: `${sensorData.pressure.toFixed(1)} kg` },
+              { label: 'Humidity', val: `${Math.round(sensorData.humidity)}%` },
+              { label: 'Door', val: sensorData.doorOpen ? 'OPEN' : 'CLOSED', color: sensorData.doorOpen ? 'text-red-400' : 'text-emerald-400' },
+              { label: 'Weight', val: `${sensorData.pressure.toFixed(1)} kg` },
             ].map(({ label, val, color }) => (
               <div key={label} className="text-center">
                 <div className={`text-2xl font-bold ${color || (isConnected ? theme.accent : theme.textMuted)}`}>{val}</div>
@@ -100,11 +92,13 @@ export function DashboardView({
         </div>
       </Card>
 
-      {/* 2 — Alerts */}
       {alerts.length > 0 && (
         <Card className={`${theme.card} ${criticalAlerts.length > 0 ? 'border-red-500/30' : 'border-yellow-500/30'} animate-slide-down`}>
           <div className="flex items-center justify-between mb-3">
-            <h3 className={`font-semibold ${theme.text} flex items-center gap-2`}><Bell className="w-5 h-5 text-yellow-400" />Alerts ({alerts.length}){criticalAlerts.length > 0 && <span className="text-xs bg-red-500 text-white px-2 py-0.5 rounded-full">{criticalAlerts.length} critical</span>}</h3>
+            <h3 className={`font-semibold ${theme.text} flex items-center gap-2`}>
+              <Bell className="w-5 h-5 text-yellow-400" />Alerts ({alerts.length})
+              {criticalAlerts.length > 0 && <span className="text-xs bg-red-500 text-white px-2 py-0.5 rounded-full animate-status-pulse">{criticalAlerts.length} critical</span>}
+            </h3>
             {alerts.length > 1 && <button onClick={onDismissAll} className={`text-xs ${theme.textMuted} hover:${theme.text} transition-colors`}>Dismiss all</button>}
           </div>
           <div className="space-y-2 max-h-48 overflow-y-auto">
@@ -119,15 +113,13 @@ export function DashboardView({
         </Card>
       )}
 
-      {/* 3 — Quick stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard icon={<AlertCircle className="w-6 h-6" />} value={expiringOrExpired.toString()} label="Near expiry" badge={{ text: `${expiredCount} URGENT`, color: 'bg-red-500/20 text-red-400' }} theme={theme} />
-        <StatCard icon={<CheckCircle2 className="w-6 h-6 text-emerald-400" />} value={String(totalConsumed)} label="Items consumed" badge={{ text: 'TRACKED', color: 'bg-emerald-500/20 text-emerald-400' }} theme={theme} />
-        <StatCard icon={<Trash2 className="w-6 h-6 text-red-400" />} value={String(totalWasted)} label="Items wasted" badge={totalWasted > 5 ? { text: 'HIGH WASTE', color: 'bg-red-500/20 text-red-400' } : { text: 'LOW WASTE', color: 'bg-emerald-500/20 text-emerald-400' }} theme={theme} />
-        <StatCard icon={<Zap className="w-6 h-6 text-yellow-400" />} value={String(inventory.length)} label="Total items" badge={{ text: 'IN FRIDGE', color: 'bg-sky-500/20 text-sky-400' }} theme={theme} />
+        <StatCard icon={<AlertCircle className="w-6 h-6" />} value={formatStat(expiringDisplay)} label="Near expiry" badge={{ text: `${expiredCount} URGENT`, color: 'bg-red-500/20 text-red-400' }} theme={theme} />
+        <StatCard icon={<CheckCircle2 className="w-6 h-6 text-emerald-400" />} value={formatStat(consumedDisplay)} label="Items consumed" badge={{ text: 'TRACKED', color: 'bg-emerald-500/20 text-emerald-400' }} theme={theme} />
+        <StatCard icon={<Trash2 className="w-6 h-6 text-red-400" />} value={formatStat(wastedDisplay)} label="Items wasted" badge={totalWasted > 5 ? { text: 'HIGH WASTE', color: 'bg-red-500/20 text-red-400' } : { text: 'LOW WASTE', color: 'bg-emerald-500/20 text-emerald-400' }} theme={theme} />
+        <StatCard icon={<Zap className="w-6 h-6 text-yellow-400" />} value={formatStat(itemsDisplay)} label="Total items" badge={{ text: 'IN FRIDGE', color: 'bg-sky-500/20 text-sky-400' }} theme={theme} />
       </div>
 
-      {/* 4 — Temperature control */}
       <Card className={theme.card}>
         <h3 className={`text-base font-bold ${theme.text} mb-4`}>Temperature control</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
@@ -141,8 +133,14 @@ export function DashboardView({
           </div>
           <div className="text-center">
             <p className={`text-xs uppercase tracking-wide ${theme.textMuted} mb-1`}>Fridge is chasing</p>
-            <div className={`text-3xl font-bold ${aiAdjusted ? 'text-purple-400' : theme.accent}`}>{goalTemp.toFixed(1)}°C</div>
-            {aiAdjusted ? <p className="text-xs text-purple-400 mt-1 flex items-center justify-center gap-1"><Sparkles className="w-3 h-3" /> AI-lowered: {aiReason}</p> : <p className={`text-xs ${theme.textMuted} mt-1`}>Matches your target</p>}
+            <div className={`text-3xl font-bold ${aiAdjusted ? 'text-purple-400' : modeAdjusted ? 'text-sky-400' : theme.accent}`}>{goalTemp.toFixed(1)}°C</div>
+            {aiAdjusted ? (
+              <p className="text-xs text-purple-400 mt-1 flex items-center justify-center gap-1"><Sparkles className="w-3 h-3" /> AI-lowered: {aiReason}</p>
+            ) : modeAdjusted ? (
+              <p className="text-xs text-sky-400 mt-1 flex items-center justify-center gap-1"><Settings className="w-3 h-3" /> Mode-adjusted ({modeOffsetApplied > 0 ? '+' : ''}{modeOffsetApplied.toFixed(1)}°C)</p>
+            ) : (
+              <p className={`text-xs ${theme.textMuted} mt-1`}>Matches your target</p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 text-xs pt-3 border-t border-slate-700/30">
@@ -150,10 +148,9 @@ export function DashboardView({
         </div>
       </Card>
 
-      {/* 5 — Mode */}
       <Card className={theme.card}>
         <h3 className={`text-base font-bold ${theme.text} mb-4 flex items-center gap-2`}><Settings className="w-4 h-4" /> Active mode</h3>
-        <div className="grid grid-cols-5 gap-2 md:gap-3">
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 md:gap-3">
           {modes.map(mode => {
             const Icon = mode.icon; const active = currentMode === mode.id;
             return (
@@ -164,10 +161,13 @@ export function DashboardView({
             );
           })}
         </div>
+        {modeBanner && (
+          <div className={`mt-3 p-2.5 rounded-lg text-xs flex items-center gap-2 ${darkMode ? 'bg-sky-950/30 text-sky-300' : 'bg-sky-50 text-sky-700'}`}>
+            <Info className="w-3.5 h-3.5 flex-shrink-0" /> {modeBanner}
+          </div>
+        )}
       </Card>
 
-      {/* 6 — AI Analysis: real intelligence, deliberately placed after the
-          practical controls rather than being the first thing on the page */}
       <div className={`rounded-xl border p-4 space-y-4 animate-fade-in ${darkMode ? 'bg-purple-950/20 border-purple-500/30' : 'bg-purple-50/60 border-purple-200'}`}>
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
@@ -179,7 +179,7 @@ export function DashboardView({
         </div>
 
         {!ml ? (
-          <p className={`text-sm ${theme.textMuted}`}>Five formulas run server-side on your sensor history: EWMA smoothing, linear-regression forecasting, Z-score anomaly detection, the Q10 spoilage model, and a food-safety composite score. This is what can lower the fridge's goal temperature automatically when spoilage risk is high.</p>
+          <p className={`text-sm ${theme.textMuted}`}>Five formulas run server-side on your sensor history: EWMA smoothing, linear-regression forecasting, Z-score anomaly detection, the Q10 spoilage model, and a food-safety composite score.</p>
         ) : (
           <>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -213,7 +213,6 @@ export function DashboardView({
         )}
       </div>
 
-      {/* 7 — AI Recommendations */}
       <div className={`rounded-xl border p-4 space-y-3 animate-fade-in ${darkMode ? 'bg-purple-950/10 border-purple-500/20' : 'bg-purple-50/30 border-purple-100'}`}>
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
@@ -223,7 +222,6 @@ export function DashboardView({
           </div>
           {advice && adviceUpdatedAt && <span className={`text-xs ${theme.textMuted}`}>{timeAgo(adviceUpdatedAt)}</span>}
         </div>
-
         {!advice ? (
           <button onClick={onGetAdvice} disabled={aiLoading} className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-sky-600 text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
             <Sparkles className="w-4 h-4" />{aiLoading ? 'Asking Gemini…' : 'Get AI Recommendations'}

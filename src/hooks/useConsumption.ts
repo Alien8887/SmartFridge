@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { ConsumptionData } from '../types';
+import { roundTo } from '../utils/numberUtils';
 
 const BASE = process.env.REACT_APP_API_URL || '';
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -11,8 +12,9 @@ function weekKey(u: string) { return `sf-consumption:${u}`; }
 function numKey(u: string, k: string) { return `sf-${k}:${u}`; }
 
 function loadLocalWeek(u: string): ConsumptionData[] { if (!u) return makeInitial(); try { const raw = localStorage.getItem(weekKey(u)); return raw ? JSON.parse(raw) : makeInitial(); } catch { return makeInitial(); } }
-function loadLocalNumber(u: string, k: string): number { if (!u) return 0; try { return parseInt(localStorage.getItem(numKey(u, k)) ?? '0', 10) || 0; } catch { return 0; } }
-function clearLocal(u: string) { try { localStorage.removeItem(weekKey(u)); localStorage.removeItem(numKey(u, 'total-consumed')); localStorage.removeItem(numKey(u, 'total-wasted')); } catch { /* ignore */ } }
+// Was parseInt — silently truncated any fractional total ("7.52" -> 7) the
+// moment amounts stopped being whole numbers. parseFloat is the real fix.
+function loadLocalNumber(u: string, k: string): number { if (!u) return 0; try { return parseFloat(localStorage.getItem(numKey(u, k)) ?? '0') || 0; } catch { return 0; } }
 
 export function useConsumption(token: string, username: string) {
   const [consumptionHistory, setConsumptionHistory] = useState<ConsumptionData[]>(() => makeInitial());
@@ -39,9 +41,15 @@ export function useConsumption(token: string, username: string) {
 
   const logItem = useCallback((name: string, category: string, action: 'consume' | 'waste', amount = 1) => {
     if (!username) return;
-    const amt = Math.max(1, amount);
+    // Was Math.max(1, amount) — a leftover from when every action was "one
+    // discrete item." That floored any partial amount (0.1kg, etc.) UP to a
+    // full 1, silently overcounting stats the moment fractional quantities
+    // became real. A positive amount now just passes through as-is.
+    const amt = amount > 0 ? amount : 0;
+    if (amt <= 0) return;
+
     if (action === 'waste') {
-      setTotalWasted(prev => { const next = prev + amt; try { localStorage.setItem(numKey(username, 'total-wasted'), String(next)); } catch {} return next; });
+      setTotalWasted(prev => { const next = roundTo(prev + amt, 3); try { localStorage.setItem(numKey(username, 'total-wasted'), String(next)); } catch {} return next; });
     } else {
       const todayName = DAYS[new Date().getDay()];
       setConsumptionHistory(prev => {
@@ -49,7 +57,7 @@ export function useConsumption(token: string, username: string) {
         try { localStorage.setItem(weekKey(username), JSON.stringify(updated)); } catch {}
         return updated;
       });
-      setTotalConsumed(prev => { const next = prev + amt; try { localStorage.setItem(numKey(username, 'total-consumed'), String(next)); } catch {} return next; });
+      setTotalConsumed(prev => { const next = roundTo(prev + amt, 3); try { localStorage.setItem(numKey(username, 'total-consumed'), String(next)); } catch {} return next; });
     }
     if (token) {
       fetch(`${BASE}/api/user-data?resource=consumption`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ name, category, action, amount: amt }) })
@@ -57,10 +65,9 @@ export function useConsumption(token: string, username: string) {
     }
   }, [token, username]);
 
-  /** Safe reset — clears usage stats locally and server-side. */
   const resetStats = useCallback(async () => {
     setConsumptionHistory(makeInitial()); setTotalConsumed(0); setTotalWasted(0); setTopItems([]);
-    clearLocal(username);
+    try { localStorage.removeItem(weekKey(username)); localStorage.removeItem(numKey(username, 'total-consumed')); localStorage.removeItem(numKey(username, 'total-wasted')); } catch { /* ignore */ }
     if (token) { try { await fetch(`${BASE}/api/user-data?resource=reset`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ target: 'consumption' }) }); } catch { /* local reset already applied */ } }
   }, [username, token]);
 

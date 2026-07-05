@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Thermometer, Droplets, Zap, DoorOpen, Lightbulb, Gauge, Volume2, Sparkles, Info, Wifi, CheckCircle, XCircle, HelpCircle, Clock3, Timer } from 'lucide-react';
+import { Thermometer, Droplets, Zap, DoorOpen, Lightbulb, Gauge, Volume2, Sparkles, Info, Wifi, CheckCircle, XCircle, HelpCircle, Clock3, Timer, Settings } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { TempChart } from '../../components/charts/TempChart';
 import { HumidityChart } from '../../components/charts/HumidityChart';
@@ -7,21 +7,15 @@ import { PressureChart } from '../../components/charts/PressureChart';
 import { EnergyChart } from '../../components/charts/EnergyChart';
 import { SensorData, ChartDataPoint, EnergyData, Theme } from '../../types';
 import type { HardwareDiagnostics } from '../../hooks/useESP32Sensors';
+import { filterByRange, bucketDoorEvents } from '../../utils/chartUtils';
 
 type TimeRange = '1H' | '24H' | '7D';
 const RANGE_MS: Record<TimeRange, number> = { '1H': 3_600_000, '24H': 86_400_000, '7D': 604_800_000 };
 const RANGE_COUNTS: Record<TimeRange, number> = { '1H': 30, '24H': 120, '7D': 500 };
-
-function filterByRange<T extends { timestamp?: number }>(data: T[], range: TimeRange, fallbackCount: number): T[] {
-  if (data.length === 0) return [];
-  const withTs = data.filter(p => p.timestamp && p.timestamp > 1_000_000);
-  if (withTs.length > 0) {
-    const cutoff = Date.now() - RANGE_MS[range];
-    const filtered = withTs.filter(p => (p.timestamp ?? 0) >= cutoff);
-    if (filtered.length > 0) { const step = Math.max(1, Math.floor(filtered.length / 200)); return filtered.filter((_, i) => i % step === 0); }
-  }
-  return data.slice(-fallbackCount);
-}
+// Hoisted to module scope — this was previously declared inside the
+// component body, meaning a NEW object every render, which is exactly what
+// tripped the "missing dependency" exhaustive-deps warning.
+const BUCKET_COUNTS: Record<TimeRange, number> = { '1H': 12, '24H': 24, '7D': 7 };
 
 function getAdvice(opens: number, energyLost: number): { text: string; color: string } {
   if (opens === 0) return { text: 'No door opens recorded yet.', color: 'text-sky-400' };
@@ -33,23 +27,13 @@ function formatUptime(seconds: number): string { if (seconds < 60) return `${sec
 function rssiInfo(rssi: number): { label: string; color: string } { if (rssi >= -60) return { label: 'Strong', color: 'text-emerald-400' }; if (rssi >= -75) return { label: 'Fair', color: 'text-yellow-400' }; return { label: 'Weak', color: 'text-red-400' }; }
 
 interface EnvironmentViewProps {
-  sensorData: SensorData;
-  energyHistory: EnergyData[];
-  temperatureHistory: ChartDataPoint[];
-  humidityHistory: ChartDataPoint[];
-  pressureHistory: ChartDataPoint[];
-  targetTemp: number;
-  goalTemp: number;
-  aiAdjusted: boolean;
-  aiReason: string | null;
-  servoAngle: number;
-  doorOpenCount: number;
-  totalEnergyLost: number;
-  doorAlarmActive: boolean;
-  lastOpenDurationSec: number | null;
-  diagnostics: HardwareDiagnostics;
-  darkMode: boolean;
-  theme: Theme;
+  sensorData: SensorData; energyHistory: EnergyData[];
+  temperatureHistory: ChartDataPoint[]; humidityHistory: ChartDataPoint[]; pressureHistory: ChartDataPoint[];
+  targetTemp: number; goalTemp: number; aiAdjusted: boolean; aiReason: string | null;
+  modeAdjusted: boolean; modeOffsetApplied: number;
+  servoAngle: number; doorOpenCount: number; totalEnergyLost: number;
+  doorAlarmActive: boolean; lastOpenDurationSec: number | null; diagnostics: HardwareDiagnostics;
+  darkMode: boolean; theme: Theme;
 }
 
 const BASE_ENERGY_PER_OPEN = 0.008;
@@ -57,8 +41,8 @@ const ENERGY_PER_SECOND_OPEN = 0.0006;
 
 export function EnvironmentView({
   sensorData, energyHistory, temperatureHistory, humidityHistory, pressureHistory,
-  targetTemp, goalTemp, aiAdjusted, aiReason, servoAngle,
-  doorOpenCount, totalEnergyLost, doorAlarmActive, lastOpenDurationSec, diagnostics,
+  targetTemp, goalTemp, aiAdjusted, aiReason, modeAdjusted, modeOffsetApplied,
+  servoAngle, doorOpenCount, totalEnergyLost, doorAlarmActive, lastOpenDurationSec, diagnostics,
   darkMode, theme,
 }: EnvironmentViewProps) {
   const [range, setRange] = useState<TimeRange>('1H');
@@ -67,7 +51,7 @@ export function EnvironmentView({
   const fTemp = useMemo(() => filterByRange(temperatureHistory, range, RANGE_COUNTS[range]), [temperatureHistory, range]);
   const fHum = useMemo(() => filterByRange(humidityHistory, range, RANGE_COUNTS[range]), [humidityHistory, range]);
   const fPressure = useMemo(() => filterByRange(pressureHistory, range, RANGE_COUNTS[range]), [pressureHistory, range]);
-  const fEnergy = useMemo(() => filterByRange(energyHistory, range, 100), [energyHistory, range]);
+  const fEnergy = useMemo(() => bucketDoorEvents(energyHistory, rangeMs, BUCKET_COUNTS[range]), [energyHistory, rangeMs, range]);
 
   const advice = getAdvice(doorOpenCount, totalEnergyLost);
   const servoPct = Math.round((servoAngle / 180) * 100);
@@ -123,11 +107,15 @@ export function EnvironmentView({
         <div className="grid grid-cols-3 gap-3 mb-4 text-center">
           <div><p className={`text-xs uppercase tracking-wide ${theme.textMuted}`}>Actual</p><p className={`text-xl font-bold ${theme.text}`}>{sensorData.temperature.toFixed(1)}°C</p></div>
           <div><p className={`text-xs uppercase tracking-wide ${theme.textMuted}`}>Your target</p><p className={`text-xl font-bold ${theme.accent}`}>{targetTemp.toFixed(1)}°C</p></div>
-          <div><p className={`text-xs uppercase tracking-wide ${theme.textMuted}`}>Goal sent to fridge</p><p className={`text-xl font-bold ${aiAdjusted ? 'text-purple-400' : theme.accent}`}>{goalTemp.toFixed(1)}°C</p></div>
+          <div><p className={`text-xs uppercase tracking-wide ${theme.textMuted}`}>Goal sent to fridge</p><p className={`text-xl font-bold ${aiAdjusted ? 'text-purple-400' : modeAdjusted ? 'text-sky-400' : theme.accent}`}>{goalTemp.toFixed(1)}°C</p></div>
         </div>
-        {aiAdjusted && (
+        {aiAdjusted ? (
           <div className={`mb-4 p-2.5 rounded-lg text-xs flex items-start gap-2 ${darkMode ? 'bg-purple-950/30 border border-purple-500/30' : 'bg-purple-50 border border-purple-200'}`}>
             <Sparkles className="w-3.5 h-3.5 text-purple-400 flex-shrink-0 mt-0.5" /><span className={theme.text}>The AI model lowered the goal below your target: {aiReason}</span>
+          </div>
+        ) : modeAdjusted && (
+          <div className={`mb-4 p-2.5 rounded-lg text-xs flex items-start gap-2 ${darkMode ? 'bg-sky-950/30 border border-sky-500/30' : 'bg-sky-50 border border-sky-200'}`}>
+            <Settings className="w-3.5 h-3.5 text-sky-400 flex-shrink-0 mt-0.5" /><span className={theme.text}>Current mode adjusted the goal by {modeOffsetApplied > 0 ? '+' : ''}{modeOffsetApplied.toFixed(1)}°C.</span>
           </div>
         )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -151,18 +139,14 @@ export function EnvironmentView({
         <Card className={`${theme.card} text-center card-hover`}>
           <DoorOpen className="w-8 h-8 text-sky-400 mx-auto mb-2" />
           <div className={`text-3xl font-bold ${theme.text}`}>{doorOpenCount}</div>
-          <div className={`text-sm ${theme.textMuted} mt-1`}>Door opens</div>
-          {lastOpenDurationSec !== null && (
-            <div className={`text-xs mt-1 flex items-center justify-center gap-1 ${theme.textMuted}`}>
-              <Timer className="w-3 h-3" /> Last open: {lastOpenDurationSec}s (+{(BASE_ENERGY_PER_OPEN + ENERGY_PER_SECOND_OPEN * lastOpenDurationSec).toFixed(3)} kWh)
-            </div>
-          )}
+          <div className={`text-sm ${theme.textMuted} mt-1`}>Door opens (all time)</div>
+          {lastOpenDurationSec !== null && <div className={`text-xs mt-1 flex items-center justify-center gap-1 ${theme.textMuted}`}><Timer className="w-3 h-3" /> Last open: {lastOpenDurationSec}s (+{(BASE_ENERGY_PER_OPEN + ENERGY_PER_SECOND_OPEN * lastOpenDurationSec).toFixed(3)} kWh)</div>}
         </Card>
         <Card className={`${theme.card} text-center card-hover`}>
           <Zap className="w-8 h-8 text-yellow-400 mx-auto mb-2" />
           <div className={`text-3xl font-bold ${theme.text}`}>{totalEnergyLost.toFixed(3)}</div>
           <div className={`text-sm ${theme.textMuted} mt-1`}>kWh lost</div>
-          <div className={`text-xs ${theme.textMuted}`}>≈ ${(totalEnergyLost * 0.15).toFixed(2)} estimated — cost now scales with how long each open lasted, not just the count</div>
+          <div className={`text-xs ${theme.textMuted}`}>≈ ${(totalEnergyLost * 0.15).toFixed(2)} estimated</div>
         </Card>
       </div>
 
@@ -183,7 +167,7 @@ export function EnvironmentView({
         <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Temperature history</h3>{fTemp.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No data yet.</div> : <TempChart data={fTemp} darkMode={darkMode} rangeMs={rangeMs} />}</Card>
         <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Humidity history</h3>{fHum.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No data yet.</div> : <HumidityChart data={fHum} darkMode={darkMode} rangeMs={rangeMs} />}</Card>
         <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Weight / load history</h3>{fPressure.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No data yet.</div> : <PressureChart data={fPressure} darkMode={darkMode} rangeMs={rangeMs} />}</Card>
-        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Door opens & cumulative energy</h3>{fEnergy.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No door events yet.</div> : <EnergyChart data={fEnergy} darkMode={darkMode} />}</Card>
+        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Door opens this period</h3>{fEnergy.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No door events yet.</div> : <EnergyChart data={fEnergy} darkMode={darkMode} />}</Card>
       </div>
     </div>
   );

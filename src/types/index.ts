@@ -23,6 +23,7 @@ export interface Product {
   name: string;
   category: string;
   defaultExpiry: number;
+  defaultUnit?: string;
 }
 
 export interface Alert {

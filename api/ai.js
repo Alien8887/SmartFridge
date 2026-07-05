@@ -109,6 +109,43 @@ module.exports = async function handler(req, res) {
       });
     }
 
+
+    if (action === 'chat') {
+      if (!process.env.GEMINI_API_KEY) return res.status(503).json({ reply: 'Chat needs GEMINI_API_KEY configured on the server.', action: null });
+
+      const { history = [], context = {} } = req.body || {};
+      const VALID_MODES = ['normal', 'party', 'ramadan', 'diet', 'travel'];
+      const invSummary = (context.inventory || []).slice(0, 10).map(i => i.name).join(', ') || 'empty';
+
+      const systemPrompt = `You are the Smart Fridge assistant embedded in a kitchen app. Be concise — 2-3 sentences unless asked for a list.
+Current state: Temperature ${context.temperature ?? '?'}°C, Humidity ${context.humidity ?? '?'}%, current mode "${context.currentMode ?? 'normal'}".
+Available modes: ${VALID_MODES.join(', ')}.
+Inventory: ${invSummary}.
+
+If — and only if — the user clearly asks to change the fridge's mode, include an action. Otherwise action must be null. Never invent any other action type.
+Respond ONLY with JSON, no markdown: {"reply":"...","action": null | {"type":"setMode","mode":"<one of: ${VALID_MODES.join('|')}>"}}`;
+
+      const contents = [
+        { role: 'user', parts: [{ text: systemPrompt }] },
+        { role: 'model', parts: [{ text: '{"reply":"Hi! I can see your fridge — ask me anything, or ask me to switch modes.","action":null}' }] },
+        ...history.slice(-10).map(h => ({ role: h.role === 'user' ? 'user' : 'model', parts: [{ text: h.text }] })),
+      ];
+
+      const r = await fetch(GEMINI_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY }, body: JSON.stringify({ contents }) });
+      if (!r.ok) { const body = await r.text().catch(() => ''); throw new Error(`Gemini ${r.status}: ${body.slice(0, 200)}`); }
+      const d = await r.json();
+      const text = d.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+
+      let parsed;
+      try { parsed = JSON.parse(text.replace(/```json|```/g, '').trim()); } catch { parsed = { reply: text.slice(0, 300), action: null }; }
+
+      let action = null;
+      if (parsed.action && parsed.action.type === 'setMode' && VALID_MODES.includes(parsed.action.mode)) action = { type: 'setMode', mode: parsed.action.mode };
+
+      return res.status(200).json({ reply: parsed.reply || "I'm not sure how to answer that.", action });
+    }
+
+
     if (action === 'advice') {
       if (!process.env.GEMINI_API_KEY) return res.status(503).json({ available: false, message: 'Add GEMINI_API_KEY to enable AI recommendations' });
 

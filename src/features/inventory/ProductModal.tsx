@@ -6,8 +6,7 @@ import { Button } from '../../components/ui/Button';
 import { Product, Theme } from '../../types';
 import { CATEGORIES, getIconForCategory, getCategoryColors, groupByCategory } from '../../utils/categoryUtils';
 import { availableProducts } from '../../data/productsCatalog';
-import { unitLabel } from '../../utils/unitUtils';
-
+import { unitLabel, sanitizeAmount } from '../../utils/unitUtils';
 interface ProductModalProps { onAdd: (product: Product, quantityAmount: number, quantityUnit: string) => void; onClose: () => void; darkMode: boolean; theme: Theme; }
 
 const UNITS = ['pcs', 'g', 'kg', 'ml', 'L'];
@@ -24,7 +23,7 @@ export function ProductModal({ onAdd, onClose, darkMode, theme }: ProductModalPr
 
   const handleQuickConfirm = () => {
     if (!selectedProduct) return;
-    const amt = Number(quickAmount) || 1;
+    const amt = sanitizeAmount(Number(quickAmount) || 1, quickUnit);
     onAdd(selectedProduct, amt, quickUnit);
     onClose();
   };
@@ -53,7 +52,7 @@ export function ProductModal({ onAdd, onClose, darkMode, theme }: ProductModalPr
     if (!validateCustom()) return;
     const expiry = new Date(expiryDate);
     const defaultExpiry = Math.max(1, Math.floor((expiry.getTime() - Date.now()) / 86_400_000));
-    onAdd({ name: name.trim(), category, defaultExpiry }, Number(amount), unit);
+    onAdd({ name: name.trim(), category, defaultExpiry }, sanitizeAmount(Number(amount), unit), unit);
     onClose();
   };
 
@@ -76,7 +75,7 @@ export function ProductModal({ onAdd, onClose, darkMode, theme }: ProductModalPr
                       <p className={`text-xs font-semibold uppercase tracking-wide mb-2 flex items-center gap-1.5 ${theme.textMuted}`}><CatIcon className="w-3.5 h-3.5" /> {cat}</p>
                       <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                         {(items as Product[]).map(p => (
-                          <button key={p.name} type="button" onClick={() => setSelectedProduct(p)}
+                          <button key={p.name} type="button" onClick={() => { setSelectedProduct(p); setQuickUnit(p.defaultUnit || 'pcs'); }}
                             className={`p-2 rounded-lg border text-xs font-medium text-center transition-colors ${darkMode ? 'border-slate-700 hover:border-sky-500 hover:bg-sky-500/10 text-slate-200' : 'border-slate-200 hover:border-sky-400 hover:bg-sky-50 text-slate-700'}`}>
                             {p.name}
                           </button>

@@ -1,47 +1,78 @@
 import { ChartDataPoint, EnergyData } from '../types';
 
+// ── timestamp / staleness helpers ──────────────────────────────────────
 export function formatTimestampTick(ts: number, spanMs: number): string {
   const d = new Date(ts);
   if (spanMs > 86_400_000) return d.toLocaleDateString([], { weekday: 'short', hour: '2-digit' });
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
+
 export function hasRealTimestamps(data: { timestamp?: number }[]): boolean {
   return data.some(p => p.timestamp && p.timestamp > 1_000_000);
 }
 
-function downloadFile(filename: string, content: string, mime: string) {
-  const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-export function exportChartCSV(data: ChartDataPoint[], sensorLabel: string, unit: string) {
-  const rows = data.map(p => [p.timestamp ? new Date(p.timestamp).toISOString() : p.time, p.value]);
-  downloadFile(`${sensorLabel.toLowerCase()}-export-${Date.now()}.csv`, [['timestamp', `${sensorLabel} (${unit})`].join(','), ...rows.map(r => r.join(','))].join('\n'), 'text/csv;charset=utf-8;');
-}
-export function exportEnergyCSV(data: EnergyData[]) {
-  const rows = data.map(p => [p.timestamp ? new Date(p.timestamp).toISOString() : p.time, p.usage, p.doorOpens]);
-  downloadFile(`energy-export-${Date.now()}.csv`, [['timestamp', 'cumulative_kwh', 'door_opens'].join(','), ...rows.map(r => r.join(','))].join('\n'), 'text/csv;charset=utf-8;');
-}
-export function exportShoppingList(items: string[]) {
-  const content = `Smart Fridge — Shopping List\nGenerated ${new Date().toLocaleString()}\n\n${items.map(i => `☐ ${i}`).join('\n')}\n`;
-  downloadFile(`shopping-list-${Date.now()}.txt`, content, 'text/plain;charset=utf-8;');
+export function getStalenessInfo(lastTimestamp: number | undefined, rangeMs: number): { isStale: boolean; staleLabel: string } {
+  if (!lastTimestamp) return { isStale: false, staleLabel: '' };
+  const staleMs = Date.now() - lastTimestamp;
+  const isStale = rangeMs > 0 && staleMs > rangeMs;
+  const mins = Math.floor(staleMs / 60000);
+  const label = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+  return { isStale, staleLabel: label };
 }
 
-/**
- * Local quadratic (degree-2) regression fit only to the most recent ~24
- * points, then evaluated at several future timestamps to produce a genuinely
- * curved forecast line instead of a single straight segment. "Local" means
- * a recent trend reversal bends the curve rather than being averaged away
- * by the full history the way a single global linear fit would.
- */
+// ── range filtering — used by EnvironmentView for temp/humidity/pressure ─
+const RANGE_MS_MAP: Record<'1H' | '24H' | '7D', number> = { '1H': 3_600_000, '24H': 86_400_000, '7D': 604_800_000 };
+
+export function filterByRange<T extends { timestamp?: number }>(data: T[], range: '1H' | '24H' | '7D', fallbackCount: number): T[] {
+  if (data.length === 0) return [];
+  const withTs = data.filter(p => p.timestamp && p.timestamp > 1_000_000);
+  if (withTs.length > 0) {
+    const cutoff = Date.now() - RANGE_MS_MAP[range];
+    const filtered = withTs.filter(p => (p.timestamp ?? 0) >= cutoff);
+    if (filtered.length > 0) {
+      const step = Math.max(1, Math.floor(filtered.length / 200));
+      return filtered.filter((_, i) => i % step === 0);
+    }
+  }
+  return data.slice(-fallbackCount);
+}
+
+// ── door-event bucketing — used by EnvironmentView's door-open chart ─────
+export function bucketDoorEvents(events: EnergyData[], rangeMs: number, bucketCount: number): EnergyData[] {
+  const withTs = events.filter(e => e.timestamp);
+  if (withTs.length === 0) return [];
+
+  const now = Date.now();
+  const start = now - rangeMs;
+  const bucketMs = rangeMs / bucketCount;
+
+  const buckets = Array.from({ length: bucketCount }, (_, i) => ({ count: 0, usage: 0, startTs: start + i * bucketMs }));
+
+  const before = withTs.filter(e => e.timestamp! < start).sort((a, b) => a.timestamp! - b.timestamp!);
+  let prevCumUsage = before.length > 0 ? before[before.length - 1].usage : 0;
+
+  withTs.filter(e => e.timestamp! >= start).sort((a, b) => a.timestamp! - b.timestamp!).forEach(e => {
+    const idx = Math.min(bucketCount - 1, Math.max(0, Math.floor((e.timestamp! - start) / bucketMs)));
+    buckets[idx].count += 1;
+    buckets[idx].usage += Math.max(0, e.usage - prevCumUsage);
+    prevCumUsage = e.usage;
+  });
+
+  return buckets.map(b => ({
+    time: new Date(b.startTs).toLocaleTimeString([], bucketMs >= 86_400_000 ? { weekday: 'short' } as any : { hour: '2-digit', minute: '2-digit' }),
+    doorOpens: b.count,
+    usage: +b.usage.toFixed(4),
+    timestamp: b.startTs,
+  }));
+}
+
+// ── forecast curve (local quadratic regression) ──────────────────────────
 export function computeForecastCurve(data: ChartDataPoint[], aheadMs: number, steps = 10): ChartDataPoint[] {
   const windowed = data.filter(p => p.timestamp).slice(-24);
   if (windowed.length < 5) return [];
 
   const t0 = windowed[0].timestamp!;
-  const xs = windowed.map(p => (p.timestamp! - t0) / 60_000); // minutes since window start
+  const xs = windowed.map(p => (p.timestamp! - t0) / 60_000);
   const ys = windowed.map(p => p.value);
   const n = xs.length;
 
@@ -69,8 +100,6 @@ export function computeForecastCurve(data: ChartDataPoint[], aheadMs: number, st
     c = det3([[S4, S3, T2], [S3, S2, T1], [S2, S1, T0]]) / D;
   }
 
-  // A quadratic can extrapolate into an absurd spike quickly — clamp the
-  // curve to the recent observed range plus one range-width of headroom.
   const yMin = Math.min(...ys), yMax = Math.max(...ys);
   const span = Math.max(yMax - yMin, 1);
   const lo = yMin - span, hi = yMax + span;
@@ -91,11 +120,26 @@ export function computeForecastCurve(data: ChartDataPoint[], aheadMs: number, st
   return out;
 }
 
-export function getStalenessInfo(lastTimestamp: number | undefined, rangeMs: number): { isStale: boolean; staleLabel: string } {
-  if (!lastTimestamp) return { isStale: false, staleLabel: '' };
-  const staleMs = Date.now() - lastTimestamp;
-  const isStale = rangeMs > 0 && staleMs > rangeMs;
-  const mins = Math.floor(staleMs / 60000);
-  const label = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
-  return { isStale, staleLabel: label };
+// ── file export helpers ──────────────────────────────────────────────────
+function downloadFile(filename: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+export function exportChartCSV(data: ChartDataPoint[], sensorLabel: string, unit: string) {
+  const rows = data.map(p => [p.timestamp ? new Date(p.timestamp).toISOString() : p.time, p.value]);
+  downloadFile(`${sensorLabel.toLowerCase()}-export-${Date.now()}.csv`, [['timestamp', `${sensorLabel} (${unit})`].join(','), ...rows.map(r => r.join(','))].join('\n'), 'text/csv;charset=utf-8;');
+}
+
+export function exportEnergyCSV(data: EnergyData[]) {
+  const rows = data.map(p => [p.timestamp ? new Date(p.timestamp).toISOString() : p.time, p.usage, p.doorOpens]);
+  downloadFile(`energy-export-${Date.now()}.csv`, [['timestamp', 'cumulative_kwh', 'door_opens'].join(','), ...rows.map(r => r.join(','))].join('\n'), 'text/csv;charset=utf-8;');
+}
+
+export function exportShoppingList(items: string[]) {
+  const content = `Smart Fridge — Shopping List\nGenerated ${new Date().toLocaleString()}\n\n${items.map(i => `☐ ${i}`).join('\n')}\n`;
+  downloadFile(`shopping-list-${Date.now()}.txt`, content, 'text/plain;charset=utf-8;');
 }

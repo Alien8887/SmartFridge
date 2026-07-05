@@ -15,25 +15,6 @@ module.exports = async function handler(req, res) {
   try {
     const username = await getUser(req);
     if (!username) return res.status(401).json({ error: 'Unauthorized' });
-    
-    if (resource === 'calendar') {
-      const key = `calendar:${username}`;
-      if (req.method === 'GET') {
-        const data = await redis.get(key);
-        return res.status(200).json(data && typeof data === 'object' ? data : {});
-      }
-      if (req.method === 'POST') {
-        const { date, meal, recipeId } = req.body || {};
-        if (!date || !['breakfast', 'lunch', 'dinner'].includes(meal)) return res.status(400).json({ error: 'Invalid date or meal' });
-        const existing = await redis.get(key);
-        const data = existing && typeof existing === 'object' ? existing : {};
-        const day = data[date] || { breakfast: null, lunch: null, dinner: null };
-        day[meal] = recipeId || null;
-        data[date] = day;
-        await redis.set(key, data);
-        return res.status(200).json({ success: true });
-      }
-    }
 
     if (resource === 'inventory') {
       const key = `inventory:${username}`;
@@ -86,12 +67,18 @@ module.exports = async function handler(req, res) {
       if (req.method === 'POST') {
         const { name, category, action, amount } = req.body || {};
         if (!action) return res.status(400).json({ error: 'Missing action' });
-        const amt = Math.max(1, Number(amount) || 1);
+        // Was Math.max(1, Number(amount) || 1) — the same "floor small
+        // fractional amounts up to 1" bug as the client-side copy, plus no
+        // rounding on the running total, which is exactly what let
+        // 7.5249999999999995 accumulate.
+        const rawAmt = Number(amount);
+        const amt = Number.isFinite(rawAmt) && rawAmt > 0 ? rawAmt : 1;
         const data = (await redis.get(key)) || { week: emptyWeek(), totalConsumed: 0, totalWasted: 0, itemCounts: {} };
         if (!data.itemCounts) data.itemCounts = {};
-        if (action === 'waste') data.totalWasted = (data.totalWasted || 0) + amt;
-        else {
-          data.totalConsumed = (data.totalConsumed || 0) + amt;
+        if (action === 'waste') {
+          data.totalWasted = +(((data.totalWasted || 0) + amt).toFixed(3));
+        } else {
+          data.totalConsumed = +(((data.totalConsumed || 0) + amt).toFixed(3));
           const todayName = DAYS[new Date().getDay()];
           const row = data.week.find(r => r.day === todayName);
           const k = (category || '').toLowerCase();
@@ -112,6 +99,22 @@ module.exports = async function handler(req, res) {
         if (action !== 'rate' || !recipeId) return res.status(400).json({ error: 'Invalid request' });
         const data = (await redis.get(key)) || { ratings: {} };
         data.ratings[recipeId] = Math.max(1, Math.min(5, Number(stars) || 1));
+        await redis.set(key, data);
+        return res.status(200).json({ success: true });
+      }
+    }
+
+    if (resource === 'calendar') {
+      const key = `calendar:${username}`;
+      if (req.method === 'GET') { const data = await redis.get(key); return res.status(200).json(data && typeof data === 'object' ? data : {}); }
+      if (req.method === 'POST') {
+        const { date, meal, recipeId } = req.body || {};
+        if (!date || !['breakfast', 'lunch', 'dinner'].includes(meal)) return res.status(400).json({ error: 'Invalid date or meal' });
+        const existing = await redis.get(key);
+        const data = existing && typeof existing === 'object' ? existing : {};
+        const day = data[date] || { breakfast: null, lunch: null, dinner: null };
+        day[meal] = recipeId || null;
+        data[date] = day;
         await redis.set(key, data);
         return res.status(200).json({ success: true });
       }

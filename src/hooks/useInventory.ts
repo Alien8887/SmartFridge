@@ -1,13 +1,23 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { InventoryItem, Product } from '../types';
 import { getDaysUntilExpiry } from '../utils/expiryUtils';
+import { roundTo } from '../utils/numberUtils';
 
 const BASE = process.env.REACT_APP_API_URL || '';
 
+// Combines the current millisecond with a monotonic in-process counter so
+// items created within the same millisecond — e.g. "Add all" in the Shopping
+// List, which runs a tight synchronous loop — never share an id. A shared id
+// was the actual cause of "Used" opening the confirmation for other items:
+// as far as React's key/state was concerned, they were the same item.
+let idCounter = 0;
+function generateId(): number {
+  idCounter = (idCounter + 1) % 1000;
+  return Date.now() * 1000 + idCounter;
+}
+
 function storageKey(username: string) { return `smart-fridge-inventory:${username}`; }
 
-/** Runs on EVERY item from EVERY source (localStorage and server) — this is
- *  what makes a NaN quantity structurally impossible from here on. */
 function sanitizeItem(raw: any): InventoryItem {
   const rawAmount = raw?.quantityAmount;
   const validAmount = typeof rawAmount === 'number' && Number.isFinite(rawAmount) && rawAmount > 0;
@@ -25,11 +35,11 @@ function sanitizeItem(raw: any): InventoryItem {
   })();
 
   return {
-    id: typeof raw?.id === 'number' ? raw.id : Date.now(),
+    id: typeof raw?.id === 'number' && Number.isFinite(raw.id) ? raw.id : generateId(),
     name: typeof raw?.name === 'string' && raw.name.trim() ? raw.name : 'Unknown item',
     category: typeof raw?.category === 'string' && raw.category ? raw.category : 'Other',
     expiry: typeof raw?.expiry === 'number' && Number.isFinite(raw.expiry) && raw.expiry > 0 ? raw.expiry : 7,
-    quantityAmount: amount,
+    quantityAmount: roundTo(amount, 3),
     quantityUnit: unit,
     freshness: typeof raw?.freshness === 'number' && Number.isFinite(raw.freshness) ? raw.freshness : 100,
     addedDate: typeof raw?.addedDate === 'number' && Number.isFinite(raw.addedDate) ? raw.addedDate : Date.now(),
@@ -83,7 +93,7 @@ export function useInventory(token: string, username: string) {
         if (!r.ok) throw new Error('fetch failed');
         const raw: any[] = await r.json();
         if (Array.isArray(raw) && raw.length > 0) {
-          const sanitized = raw.map(sanitizeItem); // ← server data is now sanitized too
+          const sanitized = raw.map(sanitizeItem);
           setInventory(sanitized);
           saveToStorage(username, sanitized);
         } else if (cached.length > 0) {
@@ -96,38 +106,53 @@ export function useInventory(token: string, username: string) {
 
   const addProduct = useCallback((product: Product, quantityAmount: number, quantityUnit: string) => {
     persist(prev => {
-      const idx = prev.findIndex(i => i.name.toLowerCase() === product.name.toLowerCase() && i.category === product.category && i.quantityUnit === quantityUnit && getDaysUntilExpiry(i.expiry, i.addedDate) > 0);
+      const idx = prev.findIndex(i =>
+        i.name.toLowerCase() === product.name.toLowerCase() &&
+        i.category === product.category &&
+        i.quantityUnit === quantityUnit &&
+        getDaysUntilExpiry(i.expiry, i.addedDate) > 0
+      );
       if (idx !== -1) {
-        const merged = { ...prev[idx], quantityAmount: prev[idx].quantityAmount + quantityAmount };
+        const merged = { ...prev[idx], quantityAmount: roundTo(prev[idx].quantityAmount + quantityAmount, 3) };
         if (token) patchServerQuantity(merged.id, merged.quantityAmount, token);
         const next = [...prev]; next[idx] = merged; return next;
       }
-      const newItem: InventoryItem = { id: Date.now(), name: product.name, category: product.category, expiry: product.defaultExpiry, quantityAmount, quantityUnit, addedDate: Date.now(), freshness: 100 };
+      const newItem: InventoryItem = { id: generateId(), name: product.name, category: product.category, expiry: product.defaultExpiry, quantityAmount: roundTo(quantityAmount, 3), quantityUnit, addedDate: Date.now(), freshness: 100 };
       if (token) postServerItem(newItem, token);
       return [newItem, ...prev];
     });
   }, [persist, token]);
 
+  /** Reduces quantityAmount by amountUsed; removes the item entirely once it hits 0. */
   const consumeItem = useCallback((id: number, amountUsed: number) => {
     persist(prev => {
       const idx = prev.findIndex(i => i.id === id);
       if (idx === -1) return prev;
-      const remaining = Math.max(0, prev[idx].quantityAmount - amountUsed);
+      const remaining = roundTo(Math.max(0, prev[idx].quantityAmount - amountUsed), 3);
       if (remaining <= 0) { if (token) deleteServerItem(id, token); return prev.filter(i => i.id !== id); }
       if (token) patchServerQuantity(id, remaining, token);
       const next = [...prev]; next[idx] = { ...prev[idx], quantityAmount: remaining }; return next;
     });
   }, [persist, token]);
 
-  const wasteItem = useCallback((id: number) => {
-    persist(prev => { if (token) deleteServerItem(id, token); return prev.filter(i => i.id !== id); });
+  /** Same shape as consumeItem — waste is now a partial amount too, not
+   *  always "discard everything," since the new usage modal lets someone
+   *  waste just part of an item and keep using the rest. */
+  const wasteItem = useCallback((id: number, amountWasted: number) => {
+    persist(prev => {
+      const idx = prev.findIndex(i => i.id === id);
+      if (idx === -1) return prev;
+      const remaining = roundTo(Math.max(0, prev[idx].quantityAmount - amountWasted), 3);
+      if (remaining <= 0) { if (token) deleteServerItem(id, token); return prev.filter(i => i.id !== id); }
+      if (token) patchServerQuantity(id, remaining, token);
+      const next = [...prev]; next[idx] = { ...prev[idx], quantityAmount: remaining }; return next;
+    });
   }, [persist, token]);
 
   const removeExpiredItems = useCallback(() => {
     persist(prev => prev.filter(item => getDaysUntilExpiry(item.expiry, item.addedDate) > 0));
   }, [persist]);
 
-  /** Safe reset — wipes this user's inventory locally and server-side. */
   const resetInventory = useCallback(async () => {
     setInventory([]);
     saveToStorage(username, []);

@@ -29,7 +29,7 @@ export function EnergyChart({ data, darkMode }: EnergyChartProps) {
           <YAxis yAxisId="right" orientation="right" allowDecimals={false} domain={[0, Math.max(4, Math.ceil(maxOpens * 1.3))]} stroke={axisColor} style={{ fontSize: '11px' }} tick={{ fill: axisColor }} />
           <Tooltip contentStyle={{ backgroundColor: darkMode ? '#1e293b' : '#fff', border: `1px solid ${darkMode ? '#475569' : '#e2e8f0'}`, borderRadius: '12px' }} />
           <Legend />
-          <Bar yAxisId="right" dataKey="doorOpens" fill="#FBBF24" name="Door opens" maxBarSize={28} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+          <Bar yAxisId="right" dataKey="doorOpens" fill="#FBBF24" name="Door opens (this period)" maxBarSize={28} radius={[4, 4, 0, 0]} isAnimationActive={false} />
           <Line yAxisId="left" type="monotone" dataKey="usage" stroke="#60A5FA" strokeWidth={2} dot={false} name="Energy (kWh)" isAnimationActive={false} />
         </ComposedChart>
       </ResponsiveContainer>

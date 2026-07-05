@@ -1,15 +1,15 @@
 import React, { useState, useMemo } from 'react';
 import {
   ShoppingCart, Clock, CheckCircle2, AlertTriangle, ChefHat, Flame,
-  Star, Heart, Download, Plus, PackageCheck,
+  Star, Heart, Download, Plus, PackageCheck, TrendingDown, ShoppingBag,
 } from 'lucide-react';
 import { Modal } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
 import { InventoryItem, Product, Theme } from '../../types';
-import { recipes, Recipe } from '../../data/demoMeals';
+import { RecipeMatch, buildMatches, nameMatch } from '../../utils/recipeMatching';
 import { availableProducts } from '../../data/productsCatalog';
-import { getDaysUntilExpiry } from '../../utils/expiryUtils';
 import { exportShoppingList } from '../../utils/chartUtils';
+import { formatStat } from '../../utils/numberUtils';
 
 interface SuggestionsViewProps {
   inventory: InventoryItem[];
@@ -18,55 +18,10 @@ interface SuggestionsViewProps {
   ratings: Record<string, number>;
   onRate: (recipeId: string, stars: number) => void;
   dietaryPreferences?: string[];
+  totalConsumed?: number;
+  totalWasted?: number;
   darkMode: boolean;
   theme: Theme;
-}
-
-interface RecipeMatch {
-  recipe: Recipe;
-  canMake: boolean;
-  matchScore: number;
-  matchedItems: InventoryItem[];
-  missingIngredients: string[];
-  urgencyLevel: 'urgent' | 'soon' | 'normal';
-  minDays: number;
-  matchedPreferences: string[];
-}
-
-function nameMatch(inventoryName: string, recipeIng: string): boolean {
-  const inv = inventoryName.toLowerCase();
-  const rec = recipeIng.toLowerCase();
-  return inv.includes(rec) || rec.includes(inv.split(' ')[0]);
-}
-
-function buildMatches(inv: InventoryItem[], ratings: Record<string, number>, dietaryPreferences: string[]): RecipeMatch[] {
-  return recipes.map(recipe => {
-    const matchedItems: InventoryItem[] = [];
-    const missing: string[] = [];
-    let minDays = 999;
-
-    recipe.ingredients.forEach(ing => {
-      const found = inv.find(item => nameMatch(item.name, ing) && item.quantityAmount > 0);
-      if (found) { matchedItems.push(found); const d = getDaysUntilExpiry(found.expiry, found.addedDate); if (d < minDays) minDays = d; }
-      else missing.push(ing);
-    });
-
-    const matchScore = recipe.ingredients.length > 0 ? matchedItems.length / recipe.ingredients.length : 0;
-    const urgencyLevel: RecipeMatch['urgencyLevel'] = minDays <= 1 ? 'urgent' : minDays <= 3 ? 'soon' : 'normal';
-    // Tag-based, best-effort — not a strict dietary filter, just a helpful signal
-    const matchedPreferences = dietaryPreferences.filter(pref => recipe.tags.some(t => t.toLowerCase().includes(pref.toLowerCase())));
-
-    return { recipe, canMake: missing.length === 0, matchScore, matchedItems, missingIngredients: missing, urgencyLevel, minDays: minDays === 999 ? 99 : minDays, matchedPreferences };
-  }).sort((a, b) => {
-    const uo = { urgent: 0, soon: 1, normal: 2 };
-    const uDiff = uo[a.urgencyLevel] - uo[b.urgencyLevel];
-    if (uDiff !== 0) return uDiff;
-    const scoreDiff = b.matchScore - a.matchScore;
-    if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
-    const ratingDiff = (ratings[b.recipe.id] ?? 3) - (ratings[a.recipe.id] ?? 3);
-    if (ratingDiff !== 0) return ratingDiff;
-    return b.matchedPreferences.length - a.matchedPreferences.length;
-  });
 }
 
 function catalogLookup(name: string): Product {
@@ -199,7 +154,7 @@ function RecipeModal({ match, boughtIngredients, onBuyIngredient, onClose, onCoo
   );
 }
 
-export function SuggestionsView({ inventory, onAddProduct, onConsume, ratings, onRate, dietaryPreferences = [], darkMode, theme }: SuggestionsViewProps) {
+export function SuggestionsView({ inventory, onAddProduct, onConsume, ratings, onRate, dietaryPreferences = [], totalConsumed = 0, totalWasted = 0, darkMode, theme }: SuggestionsViewProps) {
   const [activeTab, setActiveTab] = useState<'recipes' | 'shopping'>('recipes');
   const [selectedMatch, setSelectedMatch] = useState<RecipeMatch | null>(null);
   const [categoryFilter, setCategoryFilter] = useState('All');
@@ -233,8 +188,21 @@ export function SuggestionsView({ inventory, onAddProduct, onConsume, ratings, o
         </div>
       )}
 
-      {/* Compact single-row stats — was 4 large cards before, duplicating what
-          the Dashboard already shows. Kept here small, recipe-focused only. */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { icon: <TrendingDown className="w-5 h-5 text-emerald-400" />, val: formatStat(totalConsumed), label: 'Items used' },
+          { icon: <AlertTriangle className="w-5 h-5 text-red-400" />, val: formatStat(totalWasted), label: 'Items wasted' },
+          { icon: <CheckCircle2 className="w-5 h-5 text-sky-400" />, val: canMake.length.toString(), label: 'Cookable now' },
+          { icon: <ShoppingBag className="w-5 h-5 text-indigo-400" />, val: '$0.00', label: 'Money saved (demo)' },
+        ].map(s => (
+          <div key={s.label} className={`${theme.card} border rounded-xl p-3 text-center card-hover`}>
+            <div className="flex justify-center mb-1">{s.icon}</div>
+            <div className={`text-xl font-bold ${theme.text}`}>{s.val}</div>
+            <div className={`text-xs ${theme.textMuted}`}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
       <div className={`flex items-center gap-4 flex-wrap text-xs ${theme.textMuted} px-1`}>
         <span className="flex items-center gap-1"><PackageCheck className="w-3.5 h-3.5 text-sky-400" /> {canMake.length} cookable now</span>
         <span className="flex items-center gap-1"><Heart className="w-3.5 h-3.5 text-indigo-400" /> {loved.length} favorites</span>
