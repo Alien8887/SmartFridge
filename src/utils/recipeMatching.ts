@@ -48,12 +48,32 @@ export function buildMatches(inv: InventoryItem[], ratings: Record<string, numbe
   });
 }
 
-/** Picks the best cookable recipe not already used elsewhere in the current
- *  week's plan, so "Fill week" doesn't repeat the same dish seven times. */
-export function pickBestRecipe(matches: RecipeMatch[], excludeIds: Set<string>): RecipeMatch | null {
-  const cookable = matches.filter(m => m.canMake);
-  const fresh = cookable.filter(m => !excludeIds.has(m.recipe.id));
-  if (fresh.length > 0) return fresh[0];
-  if (cookable.length > 0) return cookable[0];
-  return matches[0] ?? null;
+/**
+ * Picks a recipe for a meal slot. Was: fall back to cookable[0] regardless
+ * of exclusion once the "unused" pool ran dry — with a small inventory,
+ * that pool empties almost immediately, so every subsequent call returned
+ * the literal same recipe, filling an entire week with one dish. Now it
+ * only ever repeats a recipe once genuinely every recipe in the catalog has
+ * been used — and it now respects `mealCategory`, so breakfast slots only
+ * draw from breakfast recipes.
+ */
+export function pickBestRecipe(matches: RecipeMatch[], excludeIds: Set<string>, mealCategory?: Recipe['category']): RecipeMatch | null {
+  if (matches.length === 0) return null;
+
+  const byCategory = mealCategory ? matches.filter(m => m.recipe.category === mealCategory) : matches;
+  const pool = byCategory.length > 0 ? byCategory : matches;
+
+  const tier1 = pool.filter(m => m.canMake && !excludeIds.has(m.recipe.id));
+  if (tier1.length > 0) return tier1[0];
+
+  const tier2 = matches.filter(m => m.canMake && !excludeIds.has(m.recipe.id));
+  if (tier2.length > 0) return tier2[0];
+
+  const tier3 = pool.filter(m => !excludeIds.has(m.recipe.id));
+  if (tier3.length > 0) return tier3[0];
+
+  const tier4 = matches.filter(m => !excludeIds.has(m.recipe.id));
+  if (tier4.length > 0) return tier4[0];
+
+  return pool[0] ?? matches[0];
 }

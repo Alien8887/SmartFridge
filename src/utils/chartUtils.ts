@@ -20,24 +20,26 @@ export function getStalenessInfo(lastTimestamp: number | undefined, rangeMs: num
   return { isStale, staleLabel: label };
 }
 
-// ── range filtering — used by EnvironmentView for temp/humidity/pressure ─
+// ── range filtering ───────────────────────────────────────────────────
 const RANGE_MS_MAP: Record<'1H' | '24H' | '7D', number> = { '1H': 3_600_000, '24H': 86_400_000, '7D': 604_800_000 };
 
-export function filterByRange<T extends { timestamp?: number }>(data: T[], range: '1H' | '24H' | '7D', fallbackCount: number): T[] {
+/**
+ * Returns points that actually fall inside the selected window.
+ * Previously, when NOTHING fell in the window, this fell back to
+ * data.slice(-fallbackCount) — silently showing days-old data mislabeled as
+ * "the last 24H." That's exactly backwards: if nothing real is in the
+ * window, the honest answer is empty, so the UI can say "no data in this
+ * range" instead of lying about how current the numbers are.
+ */
+export function filterByRange<T extends { timestamp?: number }>(data: T[], range: '1H' | '24H' | '7D', _fallbackCount?: number): T[] {
   if (data.length === 0) return [];
   const withTs = data.filter(p => p.timestamp && p.timestamp > 1_000_000);
-  if (withTs.length > 0) {
-    const cutoff = Date.now() - RANGE_MS_MAP[range];
-    const filtered = withTs.filter(p => (p.timestamp ?? 0) >= cutoff);
-    if (filtered.length > 0) {
-      const step = Math.max(1, Math.floor(filtered.length / 200));
-      return filtered.filter((_, i) => i % step === 0);
-    }
-  }
-  return data.slice(-fallbackCount);
+  if (withTs.length === 0) return [];
+  const cutoff = Date.now() - RANGE_MS_MAP[range];
+  return withTs.filter(p => (p.timestamp ?? 0) >= cutoff);
 }
 
-// ── door-event bucketing — used by EnvironmentView's door-open chart ─────
+// ── door-event bucketing ──────────────────────────────────────────────
 export function bucketDoorEvents(events: EnergyData[], rangeMs: number, bucketCount: number): EnergyData[] {
   const withTs = events.filter(e => e.timestamp);
   if (withTs.length === 0) return [];
@@ -66,8 +68,68 @@ export function bucketDoorEvents(events: EnergyData[], rangeMs: number, bucketCo
   }));
 }
 
-// ── forecast curve (local quadratic regression) ──────────────────────────
-export function computeForecastCurve(data: ChartDataPoint[], aheadMs: number, steps = 10): ChartDataPoint[] {
+// ── sensor-history aggregation (bucketing + EWMA overlay) ──────────────
+export interface AggregatedPoint extends ChartDataPoint {
+  ewmaValue?: number;
+}
+
+/**
+ * Collapses a windowed series down to a sane point count for display —
+ * bucketing into equal time slots and averaging within each. This is what
+ * "deletes points where no change is seen": a flat run of near-identical
+ * readings collapses into one averaged bucket, indistinguishable in value
+ * from decimation, but without needing to guess which points are "boring."
+ * Also computes a running EWMA over the bucketed series and attaches it as
+ * `ewmaValue`, so charts can render a smoothed trend line alongside the
+ * (now much sparser) raw series.
+ */
+export function aggregateForDisplay(points: ChartDataPoint[], targetBucketCount = 60, ewmaAlpha = 0.25): AggregatedPoint[] {
+  if (points.length === 0) return [];
+  const withTs = points.filter(p => p.timestamp);
+
+  if (withTs.length === 0 || withTs.length <= targetBucketCount) {
+    let ewma: number | undefined;
+    return points.map(p => {
+      ewma = ewma === undefined ? p.value : ewmaAlpha * p.value + (1 - ewmaAlpha) * ewma;
+      return { ...p, ewmaValue: +ewma.toFixed(2) };
+    });
+  }
+
+  const first = withTs[0].timestamp!;
+  const last = withTs[withTs.length - 1].timestamp!;
+  const span = Math.max(1, last - first);
+  const bucketMs = span / targetBucketCount;
+
+  const buckets: { sum: number; count: number; lastTs: number; lastTime: string }[] =
+    Array.from({ length: targetBucketCount }, () => ({ sum: 0, count: 0, lastTs: 0, lastTime: '' }));
+
+  withTs.forEach(p => {
+    const idx = Math.min(targetBucketCount - 1, Math.max(0, Math.floor((p.timestamp! - first) / bucketMs)));
+    buckets[idx].sum += p.value;
+    buckets[idx].count += 1;
+    buckets[idx].lastTs = p.timestamp!;
+    buckets[idx].lastTime = p.time;
+  });
+
+  let ewma: number | undefined;
+  return buckets
+    .filter(b => b.count > 0)
+    .map(b => {
+      const avg = +(b.sum / b.count).toFixed(2);
+      ewma = ewma === undefined ? avg : ewmaAlpha * avg + (1 - ewmaAlpha) * ewma;
+      return { time: b.lastTime, value: avg, timestamp: b.lastTs, ewmaValue: +ewma!.toFixed(2) };
+    });
+}
+
+// ── forecast curve (damped local quadratic, physically clipped) ────────
+/**
+ * Was a raw quadratic fit through the last 24 raw (noisy) points — exactly
+ * what produces wild, physically-nonsensical extrapolation. Two fixes:
+ * the curvature term is damped toward a gentler line (still curved, just
+ * not runaway), and the output is clipped to real physical bounds per
+ * sensor type, not just a loose multiple of recent spread.
+ */
+export function computeForecastCurve(data: ChartDataPoint[], aheadMs: number, absoluteBounds: [number, number], steps = 10): ChartDataPoint[] {
   const windowed = data.filter(p => p.timestamp).slice(-24);
   if (windowed.length < 5) return [];
 
@@ -100,9 +162,14 @@ export function computeForecastCurve(data: ChartDataPoint[], aheadMs: number, st
     c = det3([[S4, S3, T2], [S3, S2, T1], [S2, S1, T0]]) / D;
   }
 
+  const CURVATURE_DAMPING = 0.35;
+  a *= CURVATURE_DAMPING;
+
   const yMin = Math.min(...ys), yMax = Math.max(...ys);
-  const span = Math.max(yMax - yMin, 1);
-  const lo = yMin - span, hi = yMax + span;
+  const span = Math.max(yMax - yMin, 0.5);
+  const relLo = yMin - span * 0.5, relHi = yMax + span * 0.5;
+  const lo = Math.max(relLo, absoluteBounds[0]);
+  const hi = Math.min(relHi, absoluteBounds[1]);
 
   const lastX = xs[n - 1];
   const lastTs = windowed[n - 1].timestamp!;
@@ -120,7 +187,7 @@ export function computeForecastCurve(data: ChartDataPoint[], aheadMs: number, st
   return out;
 }
 
-// ── file export helpers ──────────────────────────────────────────────────
+// ── export helpers ───────────────────────────────────────────────────
 function downloadFile(filename: string, content: string, mime: string) {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);

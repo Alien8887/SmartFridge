@@ -58,8 +58,6 @@ export function DashboardView({
   const expiringOrExpired = inventory.filter(i => { const s = getItemStatus(i.expiry, i.addedDate); return s === 'expiring' || s === 'expired'; }).length;
   const expiredCount = inventory.filter(i => getItemStatus(i.expiry, i.addedDate) === 'expired').length;
 
-  // Count-up display values — the underlying numbers still pass through
-  // formatStat, so a fractional total still renders clean mid-animation.
   const expiringDisplay = useCountUp(expiringOrExpired);
   const consumedDisplay = useCountUp(totalConsumed);
   const wastedDisplay = useCountUp(totalWasted);
@@ -78,10 +76,14 @@ export function DashboardView({
           </div>
           <div className="grid grid-cols-2 md:flex md:gap-6 gap-3">
             {[
-              { label: 'Temperature', val: `${sensorData.temperature.toFixed(1)}°C` },
-              { label: 'Humidity', val: `${Math.round(sensorData.humidity)}%` },
-              { label: 'Door', val: sensorData.doorOpen ? 'OPEN' : 'CLOSED', color: sensorData.doorOpen ? 'text-red-400' : 'text-emerald-400' },
-              { label: 'Weight', val: `${sensorData.pressure.toFixed(1)} kg` },
+              // Was unconditional — the other spot causing "shows old data
+              // from days ago." These four now show — whenever we're not
+              // actually connected right now, instead of confidently
+              // displaying a reading that could be days stale.
+              { label: 'Temperature', val: isConnected ? `${sensorData.temperature.toFixed(1)}°C` : '—' },
+              { label: 'Humidity', val: isConnected ? `${Math.round(sensorData.humidity)}%` : '—' },
+              { label: 'Door', val: isConnected ? (sensorData.doorOpen ? 'OPEN' : 'CLOSED') : '—', color: isConnected ? (sensorData.doorOpen ? 'text-red-400' : 'text-emerald-400') : undefined },
+              { label: 'Weight', val: isConnected ? `${sensorData.pressure.toFixed(1)} kg` : '—' },
             ].map(({ label, val, color }) => (
               <div key={label} className="text-center">
                 <div className={`text-2xl font-bold ${color || (isConnected ? theme.accent : theme.textMuted)}`}>{val}</div>

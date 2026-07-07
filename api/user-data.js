@@ -59,22 +59,29 @@ module.exports = async function handler(req, res) {
 
     if (resource === 'consumption') {
       const key = `consumption:${username}`;
+
       if (req.method === 'GET') {
-        const data = (await redis.get(key)) || { week: emptyWeek(), totalConsumed: 0, totalWasted: 0, itemCounts: {} };
+        const requestedWeekKey = req.query.weekKey || null;
+        let data = (await redis.get(key)) || { week: emptyWeek(), totalConsumed: 0, totalWasted: 0, itemCounts: {}, weekKey: requestedWeekKey };
+        // Week rolled over since the last write — reset ONLY the weekly bar
+        // chart. Lifetime totals and favorites persist across weeks.
+        if (requestedWeekKey && data.weekKey !== requestedWeekKey) {
+          data = { ...data, week: emptyWeek(), weekKey: requestedWeekKey };
+          await redis.set(key, data);
+        }
         const topItems = Object.entries(data.itemCounts || {}).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, count]) => ({ name, count }));
         return res.status(200).json({ ...data, topItems });
       }
+
       if (req.method === 'POST') {
-        const { name, category, action, amount } = req.body || {};
+        const { name, category, action, amount, weekKey } = req.body || {};
         if (!action) return res.status(400).json({ error: 'Missing action' });
-        // Was Math.max(1, Number(amount) || 1) — the same "floor small
-        // fractional amounts up to 1" bug as the client-side copy, plus no
-        // rounding on the running total, which is exactly what let
-        // 7.5249999999999995 accumulate.
         const rawAmt = Number(amount);
         const amt = Number.isFinite(rawAmt) && rawAmt > 0 ? rawAmt : 1;
-        const data = (await redis.get(key)) || { week: emptyWeek(), totalConsumed: 0, totalWasted: 0, itemCounts: {} };
+        let data = (await redis.get(key)) || { week: emptyWeek(), totalConsumed: 0, totalWasted: 0, itemCounts: {}, weekKey: weekKey || null };
         if (!data.itemCounts) data.itemCounts = {};
+        if (weekKey && data.weekKey !== weekKey) { data.week = emptyWeek(); data.weekKey = weekKey; }
+
         if (action === 'waste') {
           data.totalWasted = +(((data.totalWasted || 0) + amt).toFixed(3));
         } else {

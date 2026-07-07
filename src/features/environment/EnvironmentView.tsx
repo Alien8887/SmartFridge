@@ -7,14 +7,11 @@ import { PressureChart } from '../../components/charts/PressureChart';
 import { EnergyChart } from '../../components/charts/EnergyChart';
 import { SensorData, ChartDataPoint, EnergyData, Theme } from '../../types';
 import type { HardwareDiagnostics } from '../../hooks/useESP32Sensors';
-import { filterByRange, bucketDoorEvents } from '../../utils/chartUtils';
+import { filterByRange, bucketDoorEvents, aggregateForDisplay } from '../../utils/chartUtils';
 
 type TimeRange = '1H' | '24H' | '7D';
 const RANGE_MS: Record<TimeRange, number> = { '1H': 3_600_000, '24H': 86_400_000, '7D': 604_800_000 };
 const RANGE_COUNTS: Record<TimeRange, number> = { '1H': 30, '24H': 120, '7D': 500 };
-// Hoisted to module scope — this was previously declared inside the
-// component body, meaning a NEW object every render, which is exactly what
-// tripped the "missing dependency" exhaustive-deps warning.
 const BUCKET_COUNTS: Record<TimeRange, number> = { '1H': 12, '24H': 24, '7D': 7 };
 
 function getAdvice(opens: number, energyLost: number): { text: string; color: string } {
@@ -48,9 +45,13 @@ export function EnvironmentView({
   const [range, setRange] = useState<TimeRange>('1H');
   const rangeMs = RANGE_MS[range];
 
-  const fTemp = useMemo(() => filterByRange(temperatureHistory, range, RANGE_COUNTS[range]), [temperatureHistory, range]);
-  const fHum = useMemo(() => filterByRange(humidityHistory, range, RANGE_COUNTS[range]), [humidityHistory, range]);
-  const fPressure = useMemo(() => filterByRange(pressureHistory, range, RANGE_COUNTS[range]), [pressureHistory, range]);
+  // filterByRange now returns [] when nothing real falls in this window
+  // (no more "days-old data mislabeled as this window"). aggregateForDisplay
+  // then buckets/averages the windowed data and attaches an EWMA trend, so
+  // bigger ranges don't render thousands of near-identical points.
+  const fTemp = useMemo(() => aggregateForDisplay(filterByRange(temperatureHistory, range, RANGE_COUNTS[range])), [temperatureHistory, range]);
+  const fHum = useMemo(() => aggregateForDisplay(filterByRange(humidityHistory, range, RANGE_COUNTS[range])), [humidityHistory, range]);
+  const fPressure = useMemo(() => aggregateForDisplay(filterByRange(pressureHistory, range, RANGE_COUNTS[range])), [pressureHistory, range]);
   const fEnergy = useMemo(() => bucketDoorEvents(energyHistory, rangeMs, BUCKET_COUNTS[range]), [energyHistory, rangeMs, range]);
 
   const advice = getAdvice(doorOpenCount, totalEnergyLost);
@@ -105,7 +106,12 @@ export function EnvironmentView({
       <Card className={theme.card}>
         <h3 className={`text-base font-bold ${theme.text} mb-3 flex items-center gap-2`}><Gauge className="w-5 h-5" /> Cooling system</h3>
         <div className="grid grid-cols-3 gap-3 mb-4 text-center">
-          <div><p className={`text-xs uppercase tracking-wide ${theme.textMuted}`}>Actual</p><p className={`text-xl font-bold ${theme.text}`}>{sensorData.temperature.toFixed(1)}°C</p></div>
+          <div>
+            <p className={`text-xs uppercase tracking-wide ${theme.textMuted}`}>Actual</p>
+            {/* Was unconditional — one of the two spots directly causing
+                "shows old data from days ago" in this view. */}
+            <p className={`text-xl font-bold ${theme.text}`}>{sensorData.connected ? `${sensorData.temperature.toFixed(1)}°C` : '—'}</p>
+          </div>
           <div><p className={`text-xs uppercase tracking-wide ${theme.textMuted}`}>Your target</p><p className={`text-xl font-bold ${theme.accent}`}>{targetTemp.toFixed(1)}°C</p></div>
           <div><p className={`text-xs uppercase tracking-wide ${theme.textMuted}`}>Goal sent to fridge</p><p className={`text-xl font-bold ${aiAdjusted ? 'text-purple-400' : modeAdjusted ? 'text-sky-400' : theme.accent}`}>{goalTemp.toFixed(1)}°C</p></div>
         </div>
@@ -164,9 +170,9 @@ export function EnvironmentView({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Temperature history</h3>{fTemp.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No data yet.</div> : <TempChart data={fTemp} darkMode={darkMode} rangeMs={rangeMs} />}</Card>
-        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Humidity history</h3>{fHum.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No data yet.</div> : <HumidityChart data={fHum} darkMode={darkMode} rangeMs={rangeMs} />}</Card>
-        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Weight / load history</h3>{fPressure.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No data yet.</div> : <PressureChart data={fPressure} darkMode={darkMode} rangeMs={rangeMs} />}</Card>
+        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Temperature history</h3>{fTemp.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No data in this range.</div> : <TempChart data={fTemp} darkMode={darkMode} rangeMs={rangeMs} />}</Card>
+        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Humidity history</h3>{fHum.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No data in this range.</div> : <HumidityChart data={fHum} darkMode={darkMode} rangeMs={rangeMs} />}</Card>
+        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Weight / load history</h3>{fPressure.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No data in this range.</div> : <PressureChart data={fPressure} darkMode={darkMode} rangeMs={rangeMs} />}</Card>
         <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Door opens this period</h3>{fEnergy.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No door events yet.</div> : <EnergyChart data={fEnergy} darkMode={darkMode} />}</Card>
       </div>
     </div>

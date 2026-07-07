@@ -24,6 +24,9 @@ const MEAL_META: Record<MealSlot, { label: string; icon: typeof Coffee; activeBg
   dinner: { label: 'Dinner', icon: Moon, activeBg: 'bg-indigo-500/10 hover:bg-indigo-500/20', iconColor: 'text-indigo-400' },
 };
 const SLOTS: MealSlot[] = ['breakfast', 'lunch', 'dinner'];
+// The fix for "breakfast should have breakfast foods" — each slot now only
+// draws from its matching recipe category.
+const MEAL_TO_CATEGORY: Record<MealSlot, Recipe['category']> = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner' };
 
 function recipeById(id: string | null): Recipe | undefined { return id ? recipes.find(r => r.id === id) : undefined; }
 
@@ -56,13 +59,8 @@ export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, c
     return set;
   }, [days, calendar]);
 
-  // Preview candidate — used for BOTH the hover tooltip on the sparkle
-  // button ("what would be suggested right now") and, once clicked, the
-  // confirmation label showing the actual meal that was picked.
-  const previewSuggestion = useMemo(() => pickBestRecipe(matches, usedRecipeIds), [matches, usedRecipeIds]);
-
   const suggestForSlot = (dateKey: string, meal: MealSlot) => {
-    const best = pickBestRecipe(matches, usedRecipeIds);
+    const best = pickBestRecipe(matches, usedRecipeIds, MEAL_TO_CATEGORY[meal]);
     if (!best) return;
     onSetMeal(dateKey, meal, best.recipe.id);
     const slotKey = `${dateKey}-${meal}`;
@@ -77,7 +75,7 @@ export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, c
       const day = calendar[key] || { breakfast: null, lunch: null, dinner: null };
       SLOTS.forEach(m => {
         if (day[m]) return;
-        const best = pickBestRecipe(matches, usedThisRun);
+        const best = pickBestRecipe(matches, usedThisRun, MEAL_TO_CATEGORY[m]);
         if (best) { onSetMeal(key, m, best.recipe.id); usedThisRun.add(best.recipe.id); }
       });
     });
@@ -155,6 +153,10 @@ export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, c
                   const recipe = recipeById(meals[meal]);
                   const slotKey = `${dateKey}-${meal}`;
                   const isJustFilled = justFilled?.slotKey === slotKey;
+                  // Per-slot preview respecting the slot's own category — this
+                  // is what makes the suggested name visible ON the button,
+                  // not just hidden behind a hover-only tooltip.
+                  const preview = !recipe && !isJustFilled ? pickBestRecipe(matches, usedRecipeIds, MEAL_TO_CATEGORY[meal]) : null;
 
                   return (
                     <div key={meal} className="flex items-stretch gap-1">
@@ -175,9 +177,10 @@ export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, c
                       </button>
                       {!recipe && !isJustFilled && (
                         <button onClick={() => suggestForSlot(dateKey, meal)}
-                          title={previewSuggestion ? `Suggest: ${previewSuggestion.recipe.name}` : 'No suggestion available'}
-                          className="flex-shrink-0 px-2 rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors">
-                          <Sparkles className="w-3.5 h-3.5" />
+                          title={preview ? `Suggest: ${preview.recipe.name}` : 'No suggestion available'}
+                          className="flex-shrink-0 flex flex-col items-center justify-center gap-0.5 px-1.5 rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors max-w-[60px]">
+                          <Sparkles className="w-3 h-3 flex-shrink-0" />
+                          {preview && <span className="text-[9px] leading-tight truncate w-full text-center">{preview.recipe.name}</span>}
                         </button>
                       )}
                     </div>
@@ -204,9 +207,10 @@ export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, c
           <div className="space-y-2 max-h-96 overflow-y-auto">
             <button onClick={() => { suggestForSlot(pickerTarget.date, pickerTarget.meal); setPickerTarget(null); }} className="w-full flex items-center gap-2 p-3 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 text-sm font-medium transition-colors"><Sparkles className="w-4 h-4" /> Suggest for me</button>
             {calendar[pickerTarget.date]?.[pickerTarget.meal] && <button onClick={() => { onSetMeal(pickerTarget.date, pickerTarget.meal, null); setPickerTarget(null); }} className="w-full flex items-center gap-2 p-3 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-sm font-medium transition-colors"><X className="w-4 h-4" /> Clear this meal</button>}
-            {recipes.map(r => (
+            {recipes.filter(r => r.category === MEAL_TO_CATEGORY[pickerTarget.meal]).concat(recipes.filter(r => r.category !== MEAL_TO_CATEGORY[pickerTarget.meal])).map(r => (
               <button key={r.id} onClick={() => { onSetMeal(pickerTarget.date, pickerTarget.meal, r.id); setPickerTarget(null); }} className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>
                 <span className="text-xl">{r.emoji}</span><span className="flex-1 text-left"><span className={`block text-sm font-medium ${theme.text}`}>{r.name}</span><span className={`block text-xs ${theme.textMuted}`}>{r.calories} kcal · {r.time}</span></span>
+                {r.category === MEAL_TO_CATEGORY[pickerTarget.meal] && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-500/15 text-indigo-400">{r.category}</span>}
               </button>
             ))}
           </div>
