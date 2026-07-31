@@ -23,11 +23,14 @@ import { useProfile } from '../hooks/useProfile';
 import { useCalendar } from '../hooks/useCalendar';
 import { getModeEffect } from '../data/modeEffects';
 import { Product } from '../types';
+import { MILESTONES } from '../data/milestones';
+import { useConfettiOnMilestone } from '../hooks/useConfettiOnMilestone';
+import { ConfettiBurst } from '../components/ui/ConfettiBurst';
+import { MilestoneToast } from '../components/ui/MilestoneToast';
 
 function App() {
   const { user, loading: authLoading, error: authError, setError: setAuthError, login, register, logout } = useAuth();
   const { darkMode, setDarkMode, theme } = useTheme();
-
   const token = user?.token ?? '';
   const username = user?.username ?? '';
   const role = user?.role ?? 'user';
@@ -136,7 +139,9 @@ function App() {
       </div>
     );
   }
-
+  const { burst: milestoneBurst, justUnlocked, clearUnlocked } = useConfettiOnMilestone(totalConsumed, MILESTONES);
+  {milestoneBurst && <ConfettiBurst />}
+  {justUnlocked && <MilestoneToast label={justUnlocked.label} icon={justUnlocked.icon} onDismiss={clearUnlocked} />}  
   const renderView = () => {
     switch (activeView) {
       case 'dashboard':

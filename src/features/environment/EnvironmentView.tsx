@@ -7,12 +7,10 @@ import { PressureChart } from '../../components/charts/PressureChart';
 import { EnergyChart } from '../../components/charts/EnergyChart';
 import { SensorData, ChartDataPoint, EnergyData, Theme } from '../../types';
 import type { HardwareDiagnostics } from '../../hooks/useESP32Sensors';
-import { filterByRange, bucketDoorEvents, aggregateForDisplay } from '../../utils/chartUtils';
+import { getWindowBounds, bucketFixedWindow, bucketDoorEvents, TimeRange } from '../../utils/chartUtils';
 
-type TimeRange = '1H' | '24H' | '7D';
-const RANGE_MS: Record<TimeRange, number> = { '1H': 3_600_000, '24H': 86_400_000, '7D': 604_800_000 };
-const RANGE_COUNTS: Record<TimeRange, number> = { '1H': 30, '24H': 120, '7D': 500 };
-const BUCKET_COUNTS: Record<TimeRange, number> = { '1H': 12, '24H': 24, '7D': 7 };
+const SENSOR_BUCKET_COUNTS: Record<TimeRange, number> = { '1H': 30, '24H': 48, '7D': 42 };
+const ENERGY_BUCKET_COUNTS: Record<TimeRange, number> = { '1H': 12, '24H': 24, '7D': 7 };
 
 function getAdvice(opens: number, energyLost: number): { text: string; color: string } {
   if (opens === 0) return { text: 'No door opens recorded yet.', color: 'text-sky-400' };
@@ -43,16 +41,12 @@ export function EnvironmentView({
   darkMode, theme,
 }: EnvironmentViewProps) {
   const [range, setRange] = useState<TimeRange>('1H');
-  const rangeMs = RANGE_MS[range];
+  const { windowStart, windowEnd } = useMemo(() => getWindowBounds(range), [range]);
 
-  // filterByRange now returns [] when nothing real falls in this window
-  // (no more "days-old data mislabeled as this window"). aggregateForDisplay
-  // then buckets/averages the windowed data and attaches an EWMA trend, so
-  // bigger ranges don't render thousands of near-identical points.
-  const fTemp = useMemo(() => aggregateForDisplay(filterByRange(temperatureHistory, range, RANGE_COUNTS[range])), [temperatureHistory, range]);
-  const fHum = useMemo(() => aggregateForDisplay(filterByRange(humidityHistory, range, RANGE_COUNTS[range])), [humidityHistory, range]);
-  const fPressure = useMemo(() => aggregateForDisplay(filterByRange(pressureHistory, range, RANGE_COUNTS[range])), [pressureHistory, range]);
-  const fEnergy = useMemo(() => bucketDoorEvents(energyHistory, rangeMs, BUCKET_COUNTS[range]), [energyHistory, rangeMs, range]);
+  const fTemp = useMemo(() => bucketFixedWindow(temperatureHistory, windowStart, windowEnd, SENSOR_BUCKET_COUNTS[range]), [temperatureHistory, windowStart, windowEnd, range]);
+  const fHum = useMemo(() => bucketFixedWindow(humidityHistory, windowStart, windowEnd, SENSOR_BUCKET_COUNTS[range]), [humidityHistory, windowStart, windowEnd, range]);
+  const fPressure = useMemo(() => bucketFixedWindow(pressureHistory, windowStart, windowEnd, SENSOR_BUCKET_COUNTS[range]), [pressureHistory, windowStart, windowEnd, range]);
+  const fEnergy = useMemo(() => bucketDoorEvents(energyHistory, windowEnd - windowStart, ENERGY_BUCKET_COUNTS[range]), [energyHistory, windowStart, windowEnd, range]);
 
   const advice = getAdvice(doorOpenCount, totalEnergyLost);
   const servoPct = Math.round((servoAngle / 180) * 100);
@@ -106,12 +100,7 @@ export function EnvironmentView({
       <Card className={theme.card}>
         <h3 className={`text-base font-bold ${theme.text} mb-3 flex items-center gap-2`}><Gauge className="w-5 h-5" /> Cooling system</h3>
         <div className="grid grid-cols-3 gap-3 mb-4 text-center">
-          <div>
-            <p className={`text-xs uppercase tracking-wide ${theme.textMuted}`}>Actual</p>
-            {/* Was unconditional — one of the two spots directly causing
-                "shows old data from days ago" in this view. */}
-            <p className={`text-xl font-bold ${theme.text}`}>{sensorData.connected ? `${sensorData.temperature.toFixed(1)}°C` : '—'}</p>
-          </div>
+          <div><p className={`text-xs uppercase tracking-wide ${theme.textMuted}`}>Actual</p><p className={`text-xl font-bold ${theme.text}`}>{sensorData.connected ? `${sensorData.temperature.toFixed(1)}°C` : '—'}</p></div>
           <div><p className={`text-xs uppercase tracking-wide ${theme.textMuted}`}>Your target</p><p className={`text-xl font-bold ${theme.accent}`}>{targetTemp.toFixed(1)}°C</p></div>
           <div><p className={`text-xs uppercase tracking-wide ${theme.textMuted}`}>Goal sent to fridge</p><p className={`text-xl font-bold ${aiAdjusted ? 'text-purple-400' : modeAdjusted ? 'text-sky-400' : theme.accent}`}>{goalTemp.toFixed(1)}°C</p></div>
         </div>
@@ -166,14 +155,14 @@ export function EnvironmentView({
         <div className={`flex rounded-lg overflow-hidden border ${darkMode ? 'border-slate-700' : 'border-slate-300'}`}>
           {RANGES.map(r => <button key={r} onClick={() => setRange(r)} className={`px-3 py-1 text-xs font-medium transition-all ${range === r ? 'bg-sky-500 text-white' : `${theme.textMuted} ${theme.hover}`}`}>{r}</button>)}
         </div>
-        <span className={`text-xs ${theme.textMuted}`}>{fTemp.length} points shown</span>
+        <span className={`text-xs ${theme.textMuted}`}>{fTemp.filter(d => d.value !== null).length} / {fTemp.length} points with data</span>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Temperature history</h3>{fTemp.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No data in this range.</div> : <TempChart data={fTemp} darkMode={darkMode} rangeMs={rangeMs} />}</Card>
-        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Humidity history</h3>{fHum.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No data in this range.</div> : <HumidityChart data={fHum} darkMode={darkMode} rangeMs={rangeMs} />}</Card>
-        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Weight / load history</h3>{fPressure.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No data in this range.</div> : <PressureChart data={fPressure} darkMode={darkMode} rangeMs={rangeMs} />}</Card>
-        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Door opens this period</h3>{fEnergy.length === 0 ? <div className={`flex items-center justify-center h-32 text-sm ${theme.textMuted}`}>No door events yet.</div> : <EnergyChart data={fEnergy} darkMode={darkMode} />}</Card>
+        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Temperature history</h3><TempChart data={fTemp} darkMode={darkMode} windowStart={windowStart} windowEnd={windowEnd} /></Card>
+        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Humidity history</h3><HumidityChart data={fHum} darkMode={darkMode} windowStart={windowStart} windowEnd={windowEnd} /></Card>
+        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Weight / load history</h3><PressureChart data={fPressure} darkMode={darkMode} windowStart={windowStart} windowEnd={windowEnd} /></Card>
+        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Door opens this period</h3><EnergyChart data={fEnergy} darkMode={darkMode} /></Card>
       </div>
     </div>
   );

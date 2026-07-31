@@ -228,6 +228,11 @@ export function DashboardView({
           <button onClick={onGetAdvice} disabled={aiLoading} className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-sky-600 text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
             <Sparkles className="w-4 h-4" />{aiLoading ? 'Asking Gemini…' : 'Get AI Recommendations'}
           </button>
+        ) : advice.available === false ? (
+          <div className={`rounded-lg p-3 text-xs ${darkMode ? 'bg-slate-800/60 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
+            <p className="font-medium mb-1">AI Recommendations aren't configured on this deployment.</p>
+            <p>Add a <code className="font-mono">GEMINI_API_KEY</code> environment variable in Vercel — get a free key at aistudio.google.com, then redeploy.</p>
+          </div>
         ) : (
           <div className="space-y-2 animate-fade-in">
             <p className={`text-xs font-semibold ${theme.textMuted}`}>{advice.overallAssessment}</p>

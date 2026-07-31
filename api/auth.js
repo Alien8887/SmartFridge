@@ -15,7 +15,6 @@ const SEED_SECRET = 'seed_once_then_delete_this_endpoint';
 const DEFAULT_USERS = [
   { username: 'admin', password: 'admin123', role: 'admin' },
   { username: 'user', password: 'user123', role: 'user' },
-  { username: 'guest', password: 'guest', role: 'guest' },
 ];
 
 module.exports = async function handler(req, res) {
@@ -25,55 +24,6 @@ module.exports = async function handler(req, res) {
   const action = req.query.action;
 
   try {
-
-    if (action === 'profile' && req.method === 'GET') {
-      const session = await getSession(req);
-      if (!session) return res.status(401).json({ error: 'Unauthorized' });
-      const user = await redis.get(`user:${session.username}`);
-      if (!user) return res.status(404).json({ error: 'User not found' });
-      return res.status(200).json({
-        username: user.username, role: user.role || 'user', createdAt: user.createdAt, hasDevice: Boolean(user.deviceToken),
-        fridgeModel: user.fridgeModel || '', fridgeCapacityLiters: user.fridgeCapacityLiters ?? null,
-        householdSize: user.householdSize ?? null, dietaryPreferences: user.dietaryPreferences || [],
-        dailyCalorieGoal: user.dailyCalorieGoal ?? null, sessionExpiresAt: session.expiresAt,
-      });
-    }
-
-    if (action === 'export' && req.method === 'GET') {
-      const session = await getSession(req);
-      if (!session) return res.status(401).json({ error: 'Unauthorized' });
-      const u = session.username;
-      const [profileData, inventory, consumption, preferences, calendarData] = await Promise.all([
-        redis.get(`user:${u}`), redis.get(`inventory:${u}`), redis.get(`consumption:${u}`), redis.get(`preferences:${u}`), redis.get(`calendar:${u}`),
-      ]);
-      const safeProfile = profileData ? { username: profileData.username, role: profileData.role, createdAt: profileData.createdAt, fridgeModel: profileData.fridgeModel, householdSize: profileData.householdSize, dietaryPreferences: profileData.dietaryPreferences } : null;
-      return res.status(200).json({ exportedAt: new Date().toISOString(), profile: safeProfile, inventory: inventory || [], consumption: consumption || {}, preferences: preferences || {}, calendar: calendarData || {} });
-    }
-
-
-    if (action === 'admin-users' && req.method === 'GET') {
-      const session = await getSession(req);
-      if (!session) return res.status(401).json({ error: 'Unauthorized' });
-      const requester = await redis.get(`user:${session.username}`);
-      if (!requester || requester.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
-
-      const keys = await redis.keys('user:*');
-      if (!keys || keys.length === 0) return res.status(200).json({ users: [] });
-      const values = await redis.mget(...keys);
-      const users = keys.map((k, i) => {
-        const u = values[i];
-        if (!u) return null;
-        // Never include passwordHash or deviceToken value — only whether one exists.
-        return {
-          username: u.username, role: u.role || 'user', createdAt: u.createdAt || null,
-          hasDevice: Boolean(u.deviceToken), fridgeModel: u.fridgeModel || '', householdSize: u.householdSize ?? null,
-        };
-      }).filter(Boolean);
-      users.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      return res.status(200).json({ users });
-    }
-
-    
     if (action === 'login' && req.method === 'POST') {
       const { username, password } = req.body || {};
       if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
@@ -123,6 +73,42 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ success: true, results });
     }
 
+    // ── NEW: emergency password reset — requires ACCOUNT_RECOVERY_SECRET
+    // (a Vercel-only env var, never exposed to the frontend). No session
+    // needed, since being locked out is exactly the scenario this exists for.
+    if (action === 'recover-account' && req.method === 'POST') {
+      if (!process.env.ACCOUNT_RECOVERY_SECRET) return res.status(503).json({ error: 'Account recovery is not configured on this deployment.' });
+      const { username, secret, newPassword } = req.body || {};
+      if (!secret || secret !== process.env.ACCOUNT_RECOVERY_SECRET) return res.status(403).json({ error: 'Invalid recovery secret.' });
+      if (!username || !newPassword || newPassword.length < 4) return res.status(400).json({ error: 'username and newPassword (4+ chars) are required.' });
+
+      const key = `user:${username.toLowerCase().trim()}`;
+      const user = await redis.get(key);
+      if (!user) return res.status(404).json({ error: `No account named '${username}' exists.` });
+
+      await redis.set(key, { ...user, passwordHash: hashPw(newPassword) });
+
+      const sessionKeys = await redis.keys('session:*');
+      if (sessionKeys && sessionKeys.length > 0) {
+        const sessions = await redis.mget(...sessionKeys);
+        const toDelete = sessionKeys.filter((k, i) => sessions[i] && sessions[i].username === user.username);
+        if (toDelete.length > 0) await redis.del(...toDelete);
+      }
+      return res.status(200).json({ success: true, message: `Password for '${user.username}' has been reset.` });
+    }
+
+    // ── NEW: used by ProfileView's password-change step 1 ─────────────
+    if (action === 'verify-password' && req.method === 'POST') {
+      const session = await getSession(req);
+      if (!session) return res.status(401).json({ error: 'Unauthorized' });
+      const { currentPassword } = req.body || {};
+      const user = await redis.get(`user:${session.username}`);
+      if (!user || !currentPassword || user.passwordHash !== hashPw(currentPassword)) {
+        return res.status(401).json({ valid: false, error: 'Current password is incorrect' });
+      }
+      return res.status(200).json({ valid: true });
+    }
+
     if (action === 'device-token' && req.method === 'GET') {
       const session = await getSession(req);
       if (!session) return res.status(401).json({ error: 'Unauthorized' });
@@ -147,7 +133,7 @@ module.exports = async function handler(req, res) {
         username: user.username, role: user.role || 'user', createdAt: user.createdAt, hasDevice: Boolean(user.deviceToken),
         fridgeModel: user.fridgeModel || '', fridgeCapacityLiters: user.fridgeCapacityLiters ?? null,
         householdSize: user.householdSize ?? null, dietaryPreferences: user.dietaryPreferences || [],
-        dailyCalorieGoal: user.dailyCalorieGoal ?? null,
+        dailyCalorieGoal: user.dailyCalorieGoal ?? null, sessionExpiresAt: session.expiresAt,
       });
     }
 
@@ -188,7 +174,6 @@ module.exports = async function handler(req, res) {
         await redis.set(userKey, updated);
         return res.status(200).json({ success: true });
       }
-
       if (subaction === 'logoutAllSessions') {
         const sessionKeys = await redis.keys('session:*');
         if (sessionKeys && sessionKeys.length > 0) {
@@ -198,18 +183,14 @@ module.exports = async function handler(req, res) {
         }
         return res.status(200).json({ success: true });
       }
-
       if (subaction === 'deleteAccount') {
         const { confirmUsername } = req.body || {};
         if (confirmUsername !== session.username) return res.status(400).json({ error: 'Type your username exactly to confirm' });
-
         const keysToDelete = [userKey, `inventory:${session.username}`, `consumption:${session.username}`, `preferences:${session.username}`, `calendar:${session.username}`, `sensors:${session.username}`, `ai-goal:${session.username}`];
         if (user.deviceToken) keysToDelete.push(`device:${user.deviceToken}`);
         await Promise.all(keysToDelete.map(k => redis.del(k)));
-
         const histKeys = await redis.keys(`hist:*:${session.username}:*`);
         if (histKeys && histKeys.length > 0) await redis.del(...histKeys);
-
         const sessionKeys = await redis.keys('session:*');
         if (sessionKeys && sessionKeys.length > 0) {
           const sessions = await redis.mget(...sessionKeys);
@@ -218,8 +199,35 @@ module.exports = async function handler(req, res) {
         }
         return res.status(200).json({ success: true });
       }
-      
       return res.status(400).json({ error: 'Unknown subaction' });
+    }
+
+    if (action === 'admin-users' && req.method === 'GET') {
+      const session = await getSession(req);
+      if (!session) return res.status(401).json({ error: 'Unauthorized' });
+      const requester = await redis.get(`user:${session.username}`);
+      if (!requester || requester.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+      const keys = await redis.keys('user:*');
+      if (!keys || keys.length === 0) return res.status(200).json({ users: [] });
+      const values = await redis.mget(...keys);
+      const users = keys.map((k, i) => {
+        const u = values[i];
+        if (!u) return null;
+        return { username: u.username, role: u.role || 'user', createdAt: u.createdAt || null, hasDevice: Boolean(u.deviceToken), fridgeModel: u.fridgeModel || '', householdSize: u.householdSize ?? null };
+      }).filter(Boolean);
+      users.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      return res.status(200).json({ users });
+    }
+
+    if (action === 'export' && req.method === 'GET') {
+      const session = await getSession(req);
+      if (!session) return res.status(401).json({ error: 'Unauthorized' });
+      const u = session.username;
+      const [profileData, inventory, consumption, preferences, calendarData] = await Promise.all([
+        redis.get(`user:${u}`), redis.get(`inventory:${u}`), redis.get(`consumption:${u}`), redis.get(`preferences:${u}`), redis.get(`calendar:${u}`),
+      ]);
+      const safeProfile = profileData ? { username: profileData.username, role: profileData.role, createdAt: profileData.createdAt, fridgeModel: profileData.fridgeModel, householdSize: profileData.householdSize, dietaryPreferences: profileData.dietaryPreferences } : null;
+      return res.status(200).json({ exportedAt: new Date().toISOString(), profile: safeProfile, inventory: inventory || [], consumption: consumption || {}, preferences: preferences || {}, calendar: calendarData || {} });
     }
 
     return res.status(400).json({ error: 'Unknown action or method' });

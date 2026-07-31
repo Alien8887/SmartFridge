@@ -24,11 +24,18 @@ const MEAL_META: Record<MealSlot, { label: string; icon: typeof Coffee; activeBg
   dinner: { label: 'Dinner', icon: Moon, activeBg: 'bg-indigo-500/10 hover:bg-indigo-500/20', iconColor: 'text-indigo-400' },
 };
 const SLOTS: MealSlot[] = ['breakfast', 'lunch', 'dinner'];
-// The fix for "breakfast should have breakfast foods" — each slot now only
-// draws from its matching recipe category.
 const MEAL_TO_CATEGORY: Record<MealSlot, Recipe['category']> = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner' };
 
 function recipeById(id: string | null): Recipe | undefined { return id ? recipes.find(r => r.id === id) : undefined; }
+
+// NEW: a real date range, replacing any implication of an "arbitrary" week.
+function formatWeekRange(start: Date): string {
+  const end = addDays(start, 6);
+  const sameMonth = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear();
+  const startStr = start.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const endStr = end.toLocaleDateString([], sameMonth ? { day: 'numeric', year: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' });
+  return `${startStr} – ${endStr}`;
+}
 
 interface JustFilled { slotKey: string; name: string; emoji: string; }
 
@@ -91,7 +98,11 @@ export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, c
   return (
     <div className="space-y-4 md:space-y-6 animate-fade-in">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className={`text-2xl md:text-3xl font-bold ${theme.text}`}>Meal Calendar</h2>
+        <div>
+          <h2 className={`text-2xl md:text-3xl font-bold ${theme.text}`}>Meal Calendar</h2>
+          {/* NEW: real date range + today's actual date, not an implied arbitrary week */}
+          <p className={`text-sm ${theme.textMuted}`}>{formatWeekRange(weekStart)} · Today: {new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+        </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button onClick={fillWeek} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors"><ClipboardList className="w-3.5 h-3.5" /> Fill week</button>
           <button onClick={() => setWeekStart(w => addDays(w, -7))} className={`p-2 rounded-lg ${theme.hover}`} aria-label="Previous week"><ChevronLeft className={`w-4 h-4 ${theme.text}`} /></button>
@@ -153,13 +164,15 @@ export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, c
                   const recipe = recipeById(meals[meal]);
                   const slotKey = `${dateKey}-${meal}`;
                   const isJustFilled = justFilled?.slotKey === slotKey;
-                  // Per-slot preview respecting the slot's own category — this
-                  // is what makes the suggested name visible ON the button,
-                  // not just hidden behind a hover-only tooltip.
                   const preview = !recipe && !isJustFilled ? pickBestRecipe(matches, usedRecipeIds, MEAL_TO_CATEGORY[meal]) : null;
 
                   return (
-                    <div key={meal} className="flex items-stretch gap-1">
+                    // FIX: was items-stretch with a shrink-wrapped preview-name
+                    // label inside the suggest button — that's what caused
+                    // overlap. Now items-center, and the suggest button is a
+                    // simple fixed-size icon square; the recipe name is
+                    // still available via the title tooltip, no cramped text.
+                    <div key={meal} className="flex items-center gap-1">
                       <button onClick={() => setPickerTarget({ date: dateKey, meal })}
                         className={`flex-1 flex items-center gap-2 p-2 rounded-lg text-left transition-all min-w-0 ${recipe || isJustFilled ? meta.activeBg : darkMode ? 'bg-slate-800/50 hover:bg-slate-700/50' : 'bg-slate-50 hover:bg-slate-100'}`}>
                         {isJustFilled ? (
@@ -178,9 +191,8 @@ export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, c
                       {!recipe && !isJustFilled && (
                         <button onClick={() => suggestForSlot(dateKey, meal)}
                           title={preview ? `Suggest: ${preview.recipe.name}` : 'No suggestion available'}
-                          className="flex-shrink-0 flex flex-col items-center justify-center gap-0.5 px-1.5 rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors max-w-[60px]">
-                          <Sparkles className="w-3 h-3 flex-shrink-0" />
-                          {preview && <span className="text-[9px] leading-tight truncate w-full text-center">{preview.recipe.name}</span>}
+                          className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors">
+                          <Sparkles className="w-3.5 h-3.5" />
                         </button>
                       )}
                     </div>

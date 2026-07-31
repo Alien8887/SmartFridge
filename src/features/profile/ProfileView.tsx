@@ -4,20 +4,12 @@ import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { DeviceConnectCard } from '../../components/ui/DeviceConnectCard';
-import { ConfettiBurst } from '../../components/ui/ConfettiBurst';
 import { Theme } from '../../types';
 import { ProfileData } from '../../hooks/useProfile';
-import { useConfettiOnMilestone } from '../../hooks/useConfettiOnMilestone';
-import { formatStat } from '../../utils/numberUtils';
+import { MILESTONES } from '../../data/milestones';
 
 const BASE = process.env.REACT_APP_API_URL || '';
 const DIETARY_OPTIONS = ['Vegetarian', 'Vegan', 'Gluten-Free', 'Dairy-Free', 'Low-Carb', 'Halal', 'Kosher', 'Nut-Free'];
-const MILESTONES = [
-  { threshold: 1, label: 'Getting Started', icon: '🌱' },
-  { threshold: 10, label: 'Waste Warrior', icon: '⚔️' },
-  { threshold: 50, label: 'Fridge Master', icon: '👑' },
-  { threshold: 100, label: 'Zero-Waste Hero', icon: '🏆' },
-];
 
 interface ProfileViewProps {
   token: string; username: string; darkMode: boolean; theme: Theme;
@@ -41,7 +33,9 @@ function timeUntil(ts: number): string {
 }
 
 export function ProfileView({ token, username, darkMode, theme, profile, profileLoading, totalConsumed, onUpdateFridgeInfo, onResetInventory, onResetStats, onLogoutAllSessions, onDeleteAccount, onExportData, onLogout }: ProfileViewProps) {
+  // ── password change: step 1 now VERIFIES server-side before unlocking step 2 ──
   const [pwStep, setPwStep] = useState<1 | 2>(1);
+  const [verifying, setVerifying] = useState(false);
   const [currentPw, setCurrentPw] = useState(''); const [newPw, setNewPw] = useState(''); const [confirmPw, setConfirmPw] = useState('');
   const [pwError, setPwError] = useState<string | null>(null); const [pwSuccess, setPwSuccess] = useState(false); const [pwLoading, setPwLoading] = useState(false);
 
@@ -54,8 +48,6 @@ export function ProfileView({ token, username, darkMode, theme, profile, profile
   const [loggingOutAll, setLoggingOutAll] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState(''); const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false); const [deleteError, setDeleteError] = useState<string | null>(null);
-
-  const milestoneBurst = useConfettiOnMilestone(totalConsumed, MILESTONES);
 
   useEffect(() => {
     if (!profile) return;
@@ -79,10 +71,22 @@ export function ProfileView({ token, username, darkMode, theme, profile, profile
     if (ok) { setFridgeSaved(true); setTimeout(() => setFridgeSaved(false), 3000); }
   };
 
-  const handleContinueToStep2 = () => {
+  // ── NEW: calls api/auth?action=verify-password BEFORE unlocking step 2 ──
+  const handleContinueToStep2 = async () => {
     setPwError(null);
     if (!currentPw.trim()) { setPwError('Enter your current password to continue'); return; }
-    setPwStep(2);
+    setVerifying(true);
+    try {
+      const r = await fetch(`${BASE}/api/auth?action=verify-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ currentPassword: currentPw }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.valid) { setPwError(d.error || 'Current password is incorrect'); return; }
+      setPwStep(2);
+    } catch { setPwError('Network error — try again'); }
+    finally { setVerifying(false); }
   };
 
   const handleChangePassword = async (e: React.FormEvent) => {
@@ -115,42 +119,39 @@ export function ProfileView({ token, username, darkMode, theme, profile, profile
 
   if (profileLoading) return <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-sky-400" /></div>;
 
-  const earnedMilestones = MILESTONES.filter(m => totalConsumed >= m.threshold);
-  const nextMilestone = MILESTONES.find(m => totalConsumed < m.threshold);
-
   return (
     <div className="space-y-4 md:space-y-6 animate-fade-in">
-      {milestoneBurst && <ConfettiBurst />}
-
       <div className="flex items-center gap-3">
         <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center flex-shrink-0"><UserCircle className="w-8 h-8 text-white" /></div>
         <div>
           <h2 className={`text-2xl font-bold ${theme.text}`}>{username}</h2>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${profile?.role === 'admin' ? 'bg-amber-500/20 text-amber-400' : 'bg-sky-500/20 text-sky-400'}`}><ShieldCheck className="w-3 h-3 inline mr-1" />{profile?.role ?? 'user'}</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${profile?.role === 'admin' ? 'bg-amber-500/20 text-amber-400' : 'bg-sky-500/20 text-sky-400'}`}>
+              <ShieldCheck className="w-3 h-3 inline mr-1" />{profile?.role ?? 'user'}
+            </span>
             {profile?.createdAt && <span className={`text-xs flex items-center gap-1 ${theme.textMuted}`}><Calendar className="w-3 h-3" /> Joined {new Date(profile.createdAt).toLocaleDateString()}</span>}
           </div>
         </div>
       </div>
 
+      {/* Static badge grid ONLY — the confetti burst + toast now live in
+          App.tsx so a milestone is celebrated no matter which tab you're
+          on when you cross it, not just if you happen to be here. */}
       <Card className={`${theme.card} border-amber-500/20`}>
         <h3 className={`font-semibold ${theme.text} mb-3 flex items-center gap-2`}><Award className="w-5 h-5 text-amber-400" /> Milestones</h3>
         <div className="flex flex-wrap gap-2">
           {MILESTONES.map(m => {
             const earned = totalConsumed >= m.threshold;
             return (
-              <div key={m.label} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${earned ? 'bg-amber-500/20 text-amber-400' : darkMode ? 'bg-slate-800 text-slate-500' : 'bg-slate-100 text-slate-400'}`}>
-                <span className={earned ? '' : 'grayscale opacity-50'}>{m.icon}</span> {m.label}
+              <div key={m.label} className={`px-3 py-2 rounded-xl text-xs transition-all ${earned ? 'bg-amber-500/20' : darkMode ? 'bg-slate-800' : 'bg-slate-100'}`}>
+                <div className={`flex items-center gap-1.5 font-medium ${earned ? 'text-amber-400' : darkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                  <span className={earned ? '' : 'grayscale opacity-50'}>{m.icon}</span> {m.label}
+                </div>
+                <p className={`mt-0.5 ${earned ? theme.textMuted : darkMode ? 'text-slate-600' : 'text-slate-300'}`}>{m.description}</p>
               </div>
             );
           })}
         </div>
-        {earnedMilestones.length > 0 && (
-          <p className={`text-xs mt-3 ${theme.textMuted}`}>🎉 You've earned {earnedMilestones.length} of {MILESTONES.length}: {earnedMilestones.map(m => m.label).join(', ')}</p>
-        )}
-        {nextMilestone && (
-          <p className={`text-xs mt-2 ${theme.textMuted}`}>{formatStat(totalConsumed)}/{nextMilestone.threshold} used toward "{nextMilestone.label}"</p>
-        )}
       </Card>
 
       <DeviceConnectCard token={token} darkMode={darkMode} theme={theme} />
@@ -161,14 +162,8 @@ export function ProfileView({ token, username, darkMode, theme, profile, profile
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl">
           <Input label="Fridge model" placeholder="e.g. Samsung RF28" value={fridgeModel} onChange={e => setFridgeModel(e.target.value)} isDark={darkMode} />
           <Input label="Fridge capacity (liters)" type="number" placeholder="e.g. 400" value={fridgeCapacity} onChange={e => setFridgeCapacity(e.target.value)} isDark={darkMode} />
-          <div>
-            <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-slate-200' : 'text-slate-700'}`}>Household size</label>
-            <div className="flex items-center gap-2"><Users className={`w-4 h-4 ${theme.textMuted}`} /><input type="number" min="1" value={householdSize} onChange={e => setHouseholdSize(e.target.value)} placeholder="e.g. 3" className={`w-full px-4 py-2 rounded-xl border ${darkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`} /></div>
-          </div>
-          <div>
-            <label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-slate-200' : 'text-slate-700'}`}>Daily calorie goal</label>
-            <div className="flex items-center gap-2"><Flame className={`w-4 h-4 ${theme.textMuted}`} /><input type="number" min="0" value={calorieGoal} onChange={e => setCalorieGoal(e.target.value)} placeholder="e.g. 2000" className={`w-full px-4 py-2 rounded-xl border ${darkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`} /></div>
-          </div>
+          <div><label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-slate-200' : 'text-slate-700'}`}>Household size</label><div className="flex items-center gap-2"><Users className={`w-4 h-4 ${theme.textMuted}`} /><input type="number" min="1" value={householdSize} onChange={e => setHouseholdSize(e.target.value)} placeholder="e.g. 3" className={`w-full px-4 py-2 rounded-xl border ${darkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`} /></div></div>
+          <div><label className={`block text-sm font-medium mb-1.5 ${darkMode ? 'text-slate-200' : 'text-slate-700'}`}>Daily calorie goal</label><div className="flex items-center gap-2"><Flame className={`w-4 h-4 ${theme.textMuted}`} /><input type="number" min="0" value={calorieGoal} onChange={e => setCalorieGoal(e.target.value)} placeholder="e.g. 2000" className={`w-full px-4 py-2 rounded-xl border ${darkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`} /></div></div>
         </div>
         <div className="mt-4">
           <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-slate-200' : 'text-slate-700'}`}>Dietary preferences</label>
@@ -184,12 +179,12 @@ export function ProfileView({ token, username, darkMode, theme, profile, profile
             <>
               <Input type="password" label="Current password" value={currentPw} onChange={e => setCurrentPw(e.target.value)} isDark={darkMode} autoComplete="current-password" />
               {pwError && <p className="text-xs text-red-400">{pwError}</p>}
-              <Button type="button" variant="primary" onClick={handleContinueToStep2}>Continue</Button>
+              <Button type="button" variant="primary" loading={verifying} onClick={handleContinueToStep2}>Continue</Button>
             </>
           ) : (
             <>
               <div className={`flex items-center justify-between text-xs ${theme.textMuted}`}>
-                <span>Now choose your new password.</span>
+                <span>Current password verified. Now choose a new one.</span>
                 <button type="button" onClick={() => { setPwStep(1); setPwError(null); }} className="underline">← Back</button>
               </div>
               <Input type="password" label="New password" value={newPw} onChange={e => setNewPw(e.target.value)} isDark={darkMode} autoComplete="new-password" />
@@ -227,7 +222,6 @@ export function ProfileView({ token, username, darkMode, theme, profile, profile
               ) : (<button onClick={() => setConfirmingReset(target)} className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 hover:bg-red-500/25 text-red-400 transition-colors">Reset</button>)}
             </div>
           ))}
-
           <div className={`p-3 rounded-lg ${darkMode ? 'bg-slate-800/50' : 'bg-slate-50'}`}>
             <p className={`text-sm font-medium ${theme.text} mb-2`}>Delete account</p>
             {!showDeleteConfirm ? (
