@@ -50,6 +50,14 @@ function App() {
   const { profile, loading: profileLoading, updateFridgeInfo, logoutAllSessions, deleteAccount, exportData } = useProfile(token, username);
   const { calendar, loading: calendarLoading, setMeal } = useCalendar(token, username);
 
+  // Must be called unconditionally, before any early return below — this
+  // relocation (it was previously after the "no user" return, further
+  // down in the file) is the actual fix for "Rendered more hooks than
+  // during the previous render." React tracks hooks by call order, not
+  // name, so a hook that only sometimes executes shifts every hook after
+  // it out of position the moment the render path changes.
+  const { burst: milestoneBurst, justUnlocked, clearUnlocked } = useConfettiOnMilestone(totalConsumed, MILESTONES);
+
   const [activeView, setActiveView] = useState('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
   const [currentMode, setCurrentModeState] = useState(() => { try { return localStorage.getItem('current-mode') || 'normal'; } catch { return 'normal'; } });
@@ -139,9 +147,7 @@ function App() {
       </div>
     );
   }
-  const { burst: milestoneBurst, justUnlocked, clearUnlocked } = useConfettiOnMilestone(totalConsumed, MILESTONES);
-  {milestoneBurst && <ConfettiBurst />}
-  {justUnlocked && <MilestoneToast label={justUnlocked.label} icon={justUnlocked.icon} onDismiss={clearUnlocked} />}  
+
   const renderView = () => {
     switch (activeView) {
       case 'dashboard':
@@ -163,7 +169,7 @@ function App() {
       case 'inventory':
         return <InventoryView inventory={inventory} loading={invLoading} topItems={topItems} onAddProduct={handleAddProduct} onConsume={handleConsume} onWaste={handleWaste} darkMode={darkMode} theme={theme} />;
       case 'suggestions':
-        return <SuggestionsView inventory={inventory} onAddProduct={handleAddProduct} onConsume={handleConsume} ratings={ratings} onRate={rateRecipe} dietaryPreferences={profile?.dietaryPreferences ?? []} darkMode={darkMode} theme={theme} />;
+        return <SuggestionsView inventory={inventory} onAddProduct={handleAddProduct} onConsume={handleConsume} ratings={ratings} onRate={rateRecipe} dietaryPreferences={profile?.dietaryPreferences ?? []} totalConsumed={totalConsumed} totalWasted={totalWasted} darkMode={darkMode} theme={theme} />;
       case 'environment':
         return (
           <EnvironmentView
@@ -188,6 +194,13 @@ function App() {
 
   return (
     <div className={`min-h-screen ${theme.bg} transition-colors duration-500`}>
+      {/* These previously sat as disconnected {expression} statements above
+          renderView() — valid syntax, but never part of any returned JSX,
+          so they built a ConfettiBurst/MilestoneToast every render and threw
+          it away. Now they're real children of the tree, so they actually
+          show up regardless of which tab is active. */}
+      {milestoneBurst && <ConfettiBurst />}
+      {justUnlocked && <MilestoneToast label={justUnlocked.label} icon={justUnlocked.icon} onDismiss={clearUnlocked} />}
       <Header username={username} role={user.role} darkMode={darkMode} setDarkMode={setDarkMode} onLogout={logout} mobileMenuOpen={mobileOpen} setMobileMenuOpen={setMobileOpen} isConnected={isConnected} theme={theme} />
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-8 flex gap-4 md:gap-6">
         <Sidebar activeView={activeView} setActiveView={setActiveView} theme={theme} darkMode={darkMode} role={role} />
