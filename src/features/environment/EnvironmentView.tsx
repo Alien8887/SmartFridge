@@ -41,6 +41,11 @@ export function EnvironmentView({
   darkMode, theme,
 }: EnvironmentViewProps) {
   const [range, setRange] = useState<TimeRange>('1H');
+  // Single toggle for all three sensor charts — this is the actual fix for
+  // issue 1. Previously each chart owned its own showForecast state, so
+  // toggling one without the others made their data arrays different
+  // lengths, which is exactly what broke Recharts' syncId matching.
+  const [showForecast, setShowForecast] = useState(false);
   const { windowStart, windowEnd } = useMemo(() => getWindowBounds(range), [range]);
 
   const fTemp = useMemo(() => bucketFixedWindow(temperatureHistory, windowStart, windowEnd, SENSOR_BUCKET_COUNTS[range]), [temperatureHistory, windowStart, windowEnd, range]);
@@ -150,18 +155,24 @@ export function EnvironmentView({
         <p className={`text-sm ${advice.color}`}>{advice.text}</p>
       </Card>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <span className={`text-sm font-medium ${theme.text}`}>Range:</span>
         <div className={`flex rounded-lg overflow-hidden border ${darkMode ? 'border-slate-700' : 'border-slate-300'}`}>
           {RANGES.map(r => <button key={r} onClick={() => setRange(r)} className={`px-3 py-1 text-xs font-medium transition-all ${range === r ? 'bg-sky-500 text-white' : `${theme.textMuted} ${theme.hover}`}`}>{r}</button>)}
         </div>
+        {/* Single shared toggle — controls Temperature, Humidity, AND
+            Weight together, which is what keeps their arrays the same
+            length and their hover-sync working. */}
+        <button onClick={() => setShowForecast(s => !s)} className={`flex items-center gap-1.5 text-xs px-3 py-1 rounded-lg transition-colors ${showForecast ? 'bg-purple-600 text-white' : 'bg-purple-500/15 text-purple-400 hover:bg-purple-500/25'}`}>
+          <Sparkles className="w-3.5 h-3.5" /> {showForecast ? 'Hide predictions' : 'Predict all sensors'}
+        </button>
         <span className={`text-xs ${theme.textMuted}`}>{fTemp.filter(d => d.value !== null).length} / {fTemp.length} points with data</span>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Temperature history</h3><TempChart data={fTemp} darkMode={darkMode} windowStart={windowStart} windowEnd={windowEnd} /></Card>
-        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Humidity history</h3><HumidityChart data={fHum} darkMode={darkMode} windowStart={windowStart} windowEnd={windowEnd} /></Card>
-        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Weight / load history</h3><PressureChart data={fPressure} darkMode={darkMode} windowStart={windowStart} windowEnd={windowEnd} /></Card>
+        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Temperature history</h3><TempChart data={fTemp} darkMode={darkMode} windowStart={windowStart} windowEnd={windowEnd} showForecast={showForecast} /></Card>
+        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Humidity history</h3><HumidityChart data={fHum} darkMode={darkMode} windowStart={windowStart} windowEnd={windowEnd} showForecast={showForecast} /></Card>
+        <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Weight / load history</h3><PressureChart data={fPressure} darkMode={darkMode} windowStart={windowStart} windowEnd={windowEnd} showForecast={showForecast} /></Card>
         <Card className={theme.card}><h3 className={`text-base font-bold ${theme.text} mb-4`}>Door opens this period</h3><EnergyChart data={fEnergy} darkMode={darkMode} /></Card>
       </div>
     </div>

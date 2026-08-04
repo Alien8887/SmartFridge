@@ -29,12 +29,10 @@ export function useConsumption(token: string, username: string) {
   const [totalConsumed, setTotalConsumed] = useState(0);
   const [totalWasted, setTotalWasted] = useState(0);
   const [topItems, setTopItems] = useState<TopItem[]>([]);
+  const [loading, setLoading] = useState(true); // NEW — drives useConfettiOnMilestone's arming
   const loadedForUser = useRef<string | null>(null);
   const currentWeekKeyRef = useRef(weekKeyFor(new Date()));
 
-  // Re-checks the week boundary hourly — a session left open across a week
-  // rollover (e.g. open Sunday night into Monday) still resets without
-  // needing a page refresh.
   useEffect(() => {
     const id = setInterval(() => {
       const freshKey = weekKeyFor(new Date());
@@ -48,9 +46,10 @@ export function useConsumption(token: string, username: string) {
   }, [username]);
 
   useEffect(() => {
-    if (!username) { setConsumptionHistory(makeInitial()); setTotalConsumed(0); setTotalWasted(0); setTopItems([]); return; }
+    if (!username) { setConsumptionHistory(makeInitial()); setTotalConsumed(0); setTotalWasted(0); setTopItems([]); setLoading(false); return; }
     if (loadedForUser.current === username) return;
     loadedForUser.current = username;
+    setLoading(true);
 
     const wk = weekKeyFor(new Date());
     currentWeekKeyRef.current = wk;
@@ -58,7 +57,8 @@ export function useConsumption(token: string, username: string) {
     setTotalConsumed(loadLocalNumber(username, 'total-consumed'));
     setTotalWasted(loadLocalNumber(username, 'total-wasted'));
 
-    if (!token) return;
+    if (!token) { setLoading(false); return; }
+
     fetch(`${BASE}/api/user-data?resource=consumption&weekKey=${wk}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => {
@@ -68,7 +68,8 @@ export function useConsumption(token: string, username: string) {
         if (Array.isArray(d.topItems)) setTopItems(d.topItems);
         try { localStorage.setItem(weekMetaKey(username), wk); } catch { /* ignore */ }
       })
-      .catch(() => { /* keep local cache */ });
+      .catch(() => { /* keep local cache */ })
+      .finally(() => setLoading(false));
   }, [username, token]);
 
   const logItem = useCallback((name: string, category: string, action: 'consume' | 'waste', amount = 1) => {
@@ -100,5 +101,5 @@ export function useConsumption(token: string, username: string) {
     if (token) { try { await fetch(`${BASE}/api/user-data?resource=reset`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ target: 'consumption' }) }); } catch { /* local reset already applied */ } }
   }, [username, token]);
 
-  return { consumptionHistory, logItem, totalConsumed, totalWasted, topItems, resetStats };
+  return { consumptionHistory, logItem, totalConsumed, totalWasted, topItems, resetStats, loading };
 }

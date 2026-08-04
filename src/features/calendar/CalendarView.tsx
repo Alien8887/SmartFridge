@@ -1,18 +1,19 @@
 import React, { useState, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Plus, X, Coffee, Sun, Moon, Sparkles, Copy, Check, ClipboardList } from 'lucide-react';
-import { Card } from '../../components/ui/Card';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Coffee, Sun, Moon, Sparkles, Copy, Check, ClipboardList, Trash2, RotateCcw } from 'lucide-react';
+import { SectionHeading } from '../../components/ui/SectionHeading';import { Card } from '../../components/ui/Card';
 import { Modal } from '../../components/ui/Modal';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { ConsumptionChart } from '../../components/charts/ConsumptionChart';
 import { Theme, ConsumptionData, InventoryItem } from '../../types';
 import { recipes, Recipe } from '../../data/demoMeals';
-import { CalendarData, MealSlot } from '../../hooks/useCalendar';
+import { CalendarData, MealSlot, CalendarUpdate } from '../../hooks/useCalendar';
 import { startOfWeek, addDays, toDateKey, formatDayLabel, isToday } from '../../utils/dateUtils';
 import { buildMatches, pickBestRecipe } from '../../utils/recipeMatching';
 
 interface CalendarViewProps {
   calendar: CalendarData; loading: boolean;
   onSetMeal: (date: string, meal: MealSlot, recipeId: string | null) => void;
+  onSetMeals: (updates: CalendarUpdate[]) => void;
   dailyCalorieGoal: number | null; consumptionHistory: ConsumptionData[];
   inventory: InventoryItem[]; ratings: Record<string, number>;
   darkMode: boolean; theme: Theme;
@@ -28,7 +29,6 @@ const MEAL_TO_CATEGORY: Record<MealSlot, Recipe['category']> = { breakfast: 'Bre
 
 function recipeById(id: string | null): Recipe | undefined { return id ? recipes.find(r => r.id === id) : undefined; }
 
-// NEW: a real date range, replacing any implication of an "arbitrary" week.
 function formatWeekRange(start: Date): string {
   const end = addDays(start, 6);
   const sameMonth = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear();
@@ -39,11 +39,12 @@ function formatWeekRange(start: Date): string {
 
 interface JustFilled { slotKey: string; name: string; emoji: string; }
 
-export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, consumptionHistory, inventory, ratings, darkMode, theme }: CalendarViewProps) {
+export function CalendarView({ calendar, loading, onSetMeal, onSetMeals, dailyCalorieGoal, consumptionHistory, inventory, ratings, darkMode, theme }: CalendarViewProps) {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [pickerTarget, setPickerTarget] = useState<{ date: string; meal: MealSlot } | null>(null);
   const [copySource, setCopySource] = useState<string | null>(null);
   const [justFilled, setJustFilled] = useState<JustFilled | null>(null);
+  const [confirmingClear, setConfirmingClear] = useState(false);
 
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
   const matches = useMemo(() => buildMatches(inventory, ratings), [inventory, ratings]);
@@ -77,39 +78,61 @@ export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, c
 
   const fillWeek = () => {
     const usedThisRun = new Set(usedRecipeIds);
+    const updates: CalendarUpdate[] = [];
     days.forEach(d => {
       const key = toDateKey(d);
       const day = calendar[key] || { breakfast: null, lunch: null, dinner: null };
       SLOTS.forEach(m => {
         if (day[m]) return;
         const best = pickBestRecipe(matches, usedThisRun, MEAL_TO_CATEGORY[m]);
-        if (best) { onSetMeal(key, m, best.recipe.id); usedThisRun.add(best.recipe.id); }
+        if (best) { updates.push({ date: key, meal: m, recipeId: best.recipe.id }); usedThisRun.add(best.recipe.id); }
       });
     });
+    onSetMeals(updates);
+  };
+
+  const clearWeek = () => {
+    const updates: CalendarUpdate[] = [];
+    days.forEach(d => { const key = toDateKey(d); SLOTS.forEach(m => updates.push({ date: key, meal: m, recipeId: null })); });
+    onSetMeals(updates);
+    setConfirmingClear(false);
   };
 
   const copyDayInto = (targetKey: string) => {
     if (!copySource) return;
     const source = calendar[copySource];
-    if (source) SLOTS.forEach(m => onSetMeal(targetKey, m, source[m]));
+    if (!source) return;
+    const updates: CalendarUpdate[] = SLOTS.map(m => ({ date: targetKey, meal: m, recipeId: source[m] }));
+    onSetMeals(updates);
     setCopySource(null);
   };
 
   return (
     <div className="space-y-4 md:space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h2 className={`text-2xl md:text-3xl font-bold ${theme.text}`}>Meal Calendar</h2>
-          {/* NEW: real date range + today's actual date, not an implied arbitrary week */}
-          <p className={`text-sm ${theme.textMuted}`}>{formatWeekRange(weekStart)} · Today: {new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={fillWeek} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors"><ClipboardList className="w-3.5 h-3.5" /> Fill week</button>
-          <button onClick={() => setWeekStart(w => addDays(w, -7))} className={`p-2 rounded-lg ${theme.hover}`} aria-label="Previous week"><ChevronLeft className={`w-4 h-4 ${theme.text}`} /></button>
-          <button onClick={() => setWeekStart(startOfWeek(new Date()))} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-teal-600 text-white hover:bg-teal-700 transition-colors">This week</button>
-          <button onClick={() => setWeekStart(w => addDays(w, 7))} className={`p-2 rounded-lg ${theme.hover}`} aria-label="Next week"><ChevronRight className={`w-4 h-4 ${theme.text}`} /></button>
-        </div>
-      </div>
+      <SectionHeading
+        icon={CalendarIcon}
+        title="Meal Calendar"
+        subtitle={`${formatWeekRange(weekStart)} · Today: ${new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}`}
+        accentColor="teal"
+        theme={theme}
+        darkMode={darkMode}
+        action={
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={fillWeek} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors"><ClipboardList className="w-3.5 h-3.5" /> Fill week</button>
+            {confirmingClear ? (
+              <div className="flex items-center gap-1">
+                <button onClick={clearWeek} className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg bg-red-500 hover:bg-red-600 text-white transition-colors"><RotateCcw className="w-3.5 h-3.5" /> Confirm</button>
+                <button onClick={() => setConfirmingClear(false)} className="text-xs px-2 py-1.5 rounded-lg bg-slate-600 hover:bg-slate-500 text-white transition-colors">Cancel</button>
+              </div>
+            ) : (
+              <button onClick={() => setConfirmingClear(true)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors"><Trash2 className="w-3.5 h-3.5" /> Clear week</button>
+            )}
+            <button onClick={() => setWeekStart(w => addDays(w, -7))} className={`p-2 rounded-lg ${theme.hover}`} aria-label="Previous week"><ChevronLeft className={`w-4 h-4 ${theme.text}`} /></button>
+            <button onClick={() => setWeekStart(startOfWeek(new Date()))} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-teal-600 text-white hover:bg-teal-700 transition-colors">This week</button>
+            <button onClick={() => setWeekStart(w => addDays(w, 7))} className={`p-2 rounded-lg ${theme.hover}`} aria-label="Next week"><ChevronRight className={`w-4 h-4 ${theme.text}`} /></button>
+          </div>
+        }
+      />
 
       {copySource && (
         <div className="animate-slide-down flex items-center justify-between bg-teal-500/10 border border-teal-500/30 rounded-xl p-3">
@@ -167,31 +190,39 @@ export function CalendarView({ calendar, loading, onSetMeal, dailyCalorieGoal, c
                   const preview = !recipe && !isJustFilled ? pickBestRecipe(matches, usedRecipeIds, MEAL_TO_CATEGORY[meal]) : null;
 
                   return (
-                    // FIX: was items-stretch with a shrink-wrapped preview-name
-                    // label inside the suggest button — that's what caused
-                    // overlap. Now items-center, and the suggest button is a
-                    // simple fixed-size icon square; the recipe name is
-                    // still available via the title tooltip, no cramped text.
-                    <div key={meal} className="flex items-center gap-1">
-                      <button onClick={() => setPickerTarget({ date: dateKey, meal })}
-                        className={`flex-1 flex items-center gap-2 p-2 rounded-lg text-left transition-all min-w-0 ${recipe || isJustFilled ? meta.activeBg : darkMode ? 'bg-slate-800/50 hover:bg-slate-700/50' : 'bg-slate-50 hover:bg-slate-100'}`}>
+                    <div key={meal} className="flex items-center gap-1 w-full">
+                      <button
+                        onClick={() => setPickerTarget({ date: dateKey, meal })}
+                        className={`flex-1 min-w-0 overflow-hidden flex items-center gap-2 p-2 rounded-lg text-left transition-all ${recipe || isJustFilled ? meta.activeBg : darkMode ? 'bg-slate-800/50 hover:bg-slate-700/50' : 'bg-slate-50 hover:bg-slate-100'}`}
+                      >
                         {isJustFilled ? (
-                          <span className="flex-1 flex items-center gap-1.5 text-xs font-medium text-indigo-400 animate-fade-in min-w-0">
-                            <Sparkles className="w-3.5 h-3.5 flex-shrink-0" /> <span className="truncate">Added: {justFilled!.emoji} {justFilled!.name}</span>
+                          <span className="flex-1 min-w-0 overflow-hidden flex items-center gap-1.5 text-xs font-medium text-indigo-400 animate-fade-in">
+                            <Sparkles className="w-3.5 h-3.5 flex-shrink-0" />
+                            <span className="truncate min-w-0">Added: {justFilled!.emoji} {justFilled!.name}</span>
                           </span>
                         ) : recipe ? (
                           <>
                             <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${meta.iconColor}`} />
-                            <span className="min-w-0 flex-1"><span className={`block text-xs font-medium truncate ${theme.text}`}>{recipe.emoji} {recipe.name}</span><span className={`block text-[10px] ${theme.textMuted}`}>{recipe.calories} kcal</span></span>
+                            <span className="min-w-0 flex-1 overflow-hidden">
+                              <span className={`block text-xs font-medium truncate ${theme.text}`}>{recipe.emoji} {recipe.name}</span>
+                              <span className={`block text-[10px] truncate ${theme.textMuted}`}>{recipe.calories} kcal</span>
+                            </span>
                           </>
                         ) : (
-                          <><Icon className={`w-3.5 h-3.5 flex-shrink-0 ${theme.textMuted}`} /><span className={`text-xs ${theme.textMuted} flex items-center gap-1`}><Plus className="w-3 h-3" /> {meta.label}</span></>
+                          <>
+                            <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${theme.textMuted}`} />
+                            <span className={`text-xs flex items-center gap-1 min-w-0 overflow-hidden ${theme.textMuted}`}>
+                              <Plus className="w-3 h-3 flex-shrink-0" /> <span className="truncate">{meta.label}</span>
+                            </span>
+                          </>
                         )}
                       </button>
                       {!recipe && !isJustFilled && (
-                        <button onClick={() => suggestForSlot(dateKey, meal)}
+                        <button
+                          onClick={() => suggestForSlot(dateKey, meal)}
                           title={preview ? `Suggest: ${preview.recipe.name}` : 'No suggestion available'}
-                          className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors">
+                          className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors"
+                        >
                           <Sparkles className="w-3.5 h-3.5" />
                         </button>
                       )}

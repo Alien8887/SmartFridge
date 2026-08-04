@@ -1,14 +1,13 @@
-import React, { useId, useState } from 'react';
+import React, { useId } from 'react';
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { formatTimestampTick, computeForecastCurve, exportChartCSV, FixedBucket } from '../../utils/chartUtils';
 import { ChartHeader, ChartFooter, ChartEmptyState } from './ChartControls';
 
-interface HumidityChartProps { data: FixedBucket[]; darkMode: boolean; windowStart: number; windowEnd: number; }
+interface HumidityChartProps { data: FixedBucket[]; darkMode: boolean; windowStart: number; windowEnd: number; showForecast: boolean; }
 const HUMIDITY_BOUNDS: [number, number] = [0, 100];
 
-export function HumidityChart({ data, darkMode, windowStart, windowEnd }: HumidityChartProps) {
+export function HumidityChart({ data, darkMode, windowStart, windowEnd, showForecast }: HumidityChartProps) {
   const gradientId = `hum-${useId().replace(/:/g, '')}`;
-  const [showForecast, setShowForecast] = useState(false);
 
   const allEmpty = data.every(d => d.value === null);
   const span = windowEnd - windowStart;
@@ -28,10 +27,10 @@ export function HumidityChart({ data, darkMode, windowStart, windowEnd }: Humidi
 
   return (
     <div>
-      <ChartHeader darkMode={darkMode} showForecast={showForecast} onToggleForecast={() => setShowForecast(s => !s)} onExport={() => exportChartCSV(realPoints, 'Humidity', '%')} />
+      <ChartHeader darkMode={darkMode} onExport={() => exportChartCSV(realPoints, 'Humidity', '%')} />
       {allEmpty ? <ChartEmptyState darkMode={darkMode} /> : (
         <ResponsiveContainer width="100%" height={250}>
-          <ComposedChart data={combined} syncId="fridge-sensors" margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+          <ComposedChart data={combined} syncId="fridge-sensors" syncMethod="value" margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
             <defs><linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#34D399" stopOpacity={0.8} /><stop offset="95%" stopColor="#34D399" stopOpacity={0} /></linearGradient></defs>
             <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
             <XAxis dataKey="timestamp" type="number" domain={[windowStart, windowEnd]} scale="time" tickFormatter={(ts: number) => formatTimestampTick(ts, span)} stroke={axisColor} style={{ fontSize: '11px' }} tick={{ fill: axisColor }} />

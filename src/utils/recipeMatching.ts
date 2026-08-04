@@ -1,6 +1,7 @@
 import { InventoryItem } from '../types';
 import { recipes, Recipe } from '../data/demoMeals';
 import { getDaysUntilExpiry } from './expiryUtils';
+import { hasEnoughQuantity } from './unitUtils';
 
 export interface RecipeMatch {
   recipe: Recipe;
@@ -13,9 +14,9 @@ export interface RecipeMatch {
   matchedPreferences: string[];
 }
 
-export function nameMatch(inventoryName: string, recipeIng: string): boolean {
+export function nameMatch(inventoryName: string, recipeIngName: string): boolean {
   const inv = inventoryName.toLowerCase();
-  const rec = recipeIng.toLowerCase();
+  const rec = recipeIngName.toLowerCase();
   return inv.includes(rec) || rec.includes(inv.split(' ')[0]);
 }
 
@@ -26,9 +27,17 @@ export function buildMatches(inv: InventoryItem[], ratings: Record<string, numbe
     let minDays = 999;
 
     recipe.ingredients.forEach(ing => {
-      const found = inv.find(item => nameMatch(item.name, ing) && item.quantityAmount > 0);
-      if (found) { matchedItems.push(found); const d = getDaysUntilExpiry(found.expiry, found.addedDate); if (d < minDays) minDays = d; }
-      else missing.push(ing);
+      const candidate = inv.find(item => nameMatch(item.name, ing.name) && item.quantityAmount > 0);
+      // FIXED: was presence-only (item.quantityAmount > 0). Now genuinely
+      // checks the real amount against what the recipe needs.
+      const sufficient = candidate ? hasEnoughQuantity(candidate.quantityAmount, candidate.quantityUnit, ing.amount, ing.unit) : false;
+      if (candidate && sufficient) {
+        matchedItems.push(candidate);
+        const d = getDaysUntilExpiry(candidate.expiry, candidate.addedDate);
+        if (d < minDays) minDays = d;
+      } else {
+        missing.push(ing.name);
+      }
     });
 
     const matchScore = recipe.ingredients.length > 0 ? matchedItems.length / recipe.ingredients.length : 0;
@@ -48,32 +57,18 @@ export function buildMatches(inv: InventoryItem[], ratings: Record<string, numbe
   });
 }
 
-/**
- * Picks a recipe for a meal slot. Was: fall back to cookable[0] regardless
- * of exclusion once the "unused" pool ran dry — with a small inventory,
- * that pool empties almost immediately, so every subsequent call returned
- * the literal same recipe, filling an entire week with one dish. Now it
- * only ever repeats a recipe once genuinely every recipe in the catalog has
- * been used — and it now respects `mealCategory`, so breakfast slots only
- * draw from breakfast recipes.
- */
 export function pickBestRecipe(matches: RecipeMatch[], excludeIds: Set<string>, mealCategory?: Recipe['category']): RecipeMatch | null {
   if (matches.length === 0) return null;
-
   const byCategory = mealCategory ? matches.filter(m => m.recipe.category === mealCategory) : matches;
   const pool = byCategory.length > 0 ? byCategory : matches;
 
   const tier1 = pool.filter(m => m.canMake && !excludeIds.has(m.recipe.id));
   if (tier1.length > 0) return tier1[0];
-
   const tier2 = matches.filter(m => m.canMake && !excludeIds.has(m.recipe.id));
   if (tier2.length > 0) return tier2[0];
-
   const tier3 = pool.filter(m => !excludeIds.has(m.recipe.id));
   if (tier3.length > 0) return tier3[0];
-
   const tier4 = matches.filter(m => !excludeIds.has(m.recipe.id));
   if (tier4.length > 0) return tier4[0];
-
   return pool[0] ?? matches[0];
 }

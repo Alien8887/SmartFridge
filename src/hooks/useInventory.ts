@@ -5,11 +5,6 @@ import { roundTo } from '../utils/numberUtils';
 
 const BASE = process.env.REACT_APP_API_URL || '';
 
-// Combines the current millisecond with a monotonic in-process counter so
-// items created within the same millisecond — e.g. "Add all" in the Shopping
-// List, which runs a tight synchronous loop — never share an id. A shared id
-// was the actual cause of "Used" opening the confirmation for other items:
-// as far as React's key/state was concerned, they were the same item.
 let idCounter = 0;
 function generateId(): number {
   idCounter = (idCounter + 1) % 1000;
@@ -64,6 +59,9 @@ async function patchServerQuantity(id: number, quantityAmount: number, token: st
 }
 async function deleteServerItem(id: number, token: string) {
   try { await fetch(`${BASE}/api/user-data?resource=inventory&id=${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }); } catch { /* ignore */ }
+}
+async function postServerItemsBatch(items: InventoryItem[], token: string) {
+  try { await fetch(`${BASE}/api/user-data?resource=inventory-batch`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ items: items.map(i => ({ id: i.id, name: i.name, category: i.category, expiry: i.expiry, quantityAmount: i.quantityAmount, quantityUnit: i.quantityUnit })) }) }); } catch { /* ignore */ }
 }
 
 export function useInventory(token: string, username: string) {
@@ -123,7 +121,36 @@ export function useInventory(token: string, username: string) {
     });
   }, [persist, token]);
 
-  /** Reduces quantityAmount by amountUsed; removes the item entirely once it hits 0. */
+  /** Adds many products atomically — merges into existing batches locally
+   *  the same way addProduct does, then sends ONE batch request for
+   *  whatever's genuinely new. Shopping List's "Add all" calls this. */
+  const addProducts = useCallback((items: { product: Product; amount: number; unit: string }[]) => {
+    if (items.length === 0) return;
+    persist(prev => {
+      let next = [...prev];
+      const toSendToServer: InventoryItem[] = [];
+      for (const { product, amount, unit } of items) {
+        const idx = next.findIndex(i =>
+          i.name.toLowerCase() === product.name.toLowerCase() &&
+          i.category === product.category &&
+          i.quantityUnit === unit &&
+          getDaysUntilExpiry(i.expiry, i.addedDate) > 0
+        );
+        if (idx !== -1) {
+          const merged = { ...next[idx], quantityAmount: roundTo(next[idx].quantityAmount + amount, 3) };
+          next[idx] = merged;
+          if (token) patchServerQuantity(merged.id, merged.quantityAmount, token);
+        } else {
+          const newItem: InventoryItem = { id: generateId(), name: product.name, category: product.category, expiry: product.defaultExpiry, quantityAmount: roundTo(amount, 3), quantityUnit: unit, addedDate: Date.now(), freshness: 100 };
+          next = [newItem, ...next];
+          toSendToServer.push(newItem);
+        }
+      }
+      if (token && toSendToServer.length > 0) postServerItemsBatch(toSendToServer, token);
+      return next;
+    });
+  }, [persist, token]);
+
   const consumeItem = useCallback((id: number, amountUsed: number) => {
     persist(prev => {
       const idx = prev.findIndex(i => i.id === id);
@@ -135,9 +162,6 @@ export function useInventory(token: string, username: string) {
     });
   }, [persist, token]);
 
-  /** Same shape as consumeItem — waste is now a partial amount too, not
-   *  always "discard everything," since the new usage modal lets someone
-   *  waste just part of an item and keep using the rest. */
   const wasteItem = useCallback((id: number, amountWasted: number) => {
     persist(prev => {
       const idx = prev.findIndex(i => i.id === id);
@@ -159,5 +183,5 @@ export function useInventory(token: string, username: string) {
     if (token) { try { await fetch(`${BASE}/api/user-data?resource=reset`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ target: 'inventory' }) }); } catch { /* local reset already applied */ } }
   }, [username, token]);
 
-  return { inventory, loading, addProduct, consumeItem, wasteItem, removeExpiredItems, resetInventory };
+  return { inventory, loading, addProduct, addProducts, consumeItem, wasteItem, removeExpiredItems, resetInventory };
 }

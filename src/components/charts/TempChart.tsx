@@ -1,14 +1,13 @@
-import React, { useId, useState } from 'react';
+import React, { useId } from 'react';
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { formatTimestampTick, computeForecastCurve, exportChartCSV, FixedBucket } from '../../utils/chartUtils';
 import { ChartHeader, ChartFooter, ChartEmptyState } from './ChartControls';
 
-interface TempChartProps { data: FixedBucket[]; darkMode: boolean; windowStart: number; windowEnd: number; }
+interface TempChartProps { data: FixedBucket[]; darkMode: boolean; windowStart: number; windowEnd: number; showForecast: boolean; }
 const TEMP_BOUNDS: [number, number] = [-10, 30];
 
-export function TempChart({ data, darkMode, windowStart, windowEnd }: TempChartProps) {
+export function TempChart({ data, darkMode, windowStart, windowEnd, showForecast }: TempChartProps) {
   const gradientId = `temp-${useId().replace(/:/g, '')}`;
-  const [showForecast, setShowForecast] = useState(false);
 
   const allEmpty = data.every(d => d.value === null);
   const span = windowEnd - windowStart;
@@ -28,13 +27,16 @@ export function TempChart({ data, darkMode, windowStart, windowEnd }: TempChartP
 
   return (
     <div>
-      <ChartHeader darkMode={darkMode} showForecast={showForecast} onToggleForecast={() => setShowForecast(s => !s)} onExport={() => exportChartCSV(realPoints, 'Temperature', '°C')} />
+      <ChartHeader darkMode={darkMode} onExport={() => exportChartCSV(realPoints, 'Temperature', '°C')} />
       {allEmpty ? <ChartEmptyState darkMode={darkMode} /> : (
         <ResponsiveContainer width="100%" height={250}>
-          {/* syncId: hovering here also highlights Humidity + Pressure at
-              the same real moment — all three share identical window
-              bounds and bucket counts, so their indices line up exactly. */}
-          <ComposedChart data={combined} syncId="fridge-sensors" margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+          {/* syncId + syncMethod="value": showForecast is now owned by
+              EnvironmentView and shared across all three sensor charts —
+              their arrays always stay the same length, which is the real
+              fix. syncMethod="value" (matches by timestamp, not array
+              index) is defense-in-depth on top, confirmed against
+              Recharts' own docs. */}
+          <ComposedChart data={combined} syncId="fridge-sensors" syncMethod="value" margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
             <defs><linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#60A5FA" stopOpacity={0.8} /><stop offset="95%" stopColor="#60A5FA" stopOpacity={0} /></linearGradient></defs>
             <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
             <XAxis dataKey="timestamp" type="number" domain={[windowStart, windowEnd]} scale="time" tickFormatter={(ts: number) => formatTimestampTick(ts, span)} stroke={axisColor} style={{ fontSize: '11px' }} tick={{ fill: axisColor }} />

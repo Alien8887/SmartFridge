@@ -1,25 +1,34 @@
 import React, { useState, useMemo } from 'react';
 import {
   ShoppingCart, Clock, CheckCircle2, AlertTriangle, ChefHat, Flame,
-  Star, Heart, Download, Plus, PackageCheck, TrendingDown, ShoppingBag,
+  Star, Heart, Download, Plus, Minus, PackageCheck, TrendingDown, ShoppingBag, Users,
 } from 'lucide-react';
 import { Modal } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
+import { ModeInsightBanner } from '../../components/ui/ModeInsightBanner';
 import { InventoryItem, Product, Theme } from '../../types';
 import { RecipeMatch, buildMatches, nameMatch } from '../../utils/recipeMatching';
+import { RecipeIngredient } from '../../data/demoMeals';
+import { scaleIngredient, scaleCalories, formatIngredientAmount } from '../../utils/recipeScaling';
+import { hasEnoughQuantity } from '../../utils/unitUtils';
 import { availableProducts } from '../../data/productsCatalog';
 import { exportShoppingList } from '../../utils/chartUtils';
 import { formatStat } from '../../utils/numberUtils';
+import { getModeInsight } from '../../data/modeEffects';
 
 interface SuggestionsViewProps {
   inventory: InventoryItem[];
   onAddProduct: (product: Product, quantityAmount: number, quantityUnit: string) => void;
+  onAddProducts: (items: { product: Product; amount: number; unit: string }[]) => void; // NEW
   onConsume: (id: number, amount: number) => void;
   ratings: Record<string, number>;
   onRate: (recipeId: string, stars: number) => void;
   dietaryPreferences?: string[];
   totalConsumed?: number;
   totalWasted?: number;
+  currentMode?: string;
+  householdSize?: number | null;
+  dailyCalorieGoal?: number | null;
   darkMode: boolean;
   theme: Theme;
 }
@@ -96,65 +105,120 @@ function RecipeCard({ match, ratings, onRate, darkMode, theme, onSelect }: { mat
   );
 }
 
-function RecipeModal({ match, boughtIngredients, onBuyIngredient, onClose, onCook, darkMode, theme }: {
-  match: RecipeMatch; boughtIngredients: Set<string>; onBuyIngredient: (name: string) => void; onClose: () => void; onCook: (match: RecipeMatch) => void; darkMode: boolean; theme: Theme;
+function RecipeModal({ match, inventory, boughtIngredients, onBuyIngredient, onClose, onConsume, defaultServings, darkMode, theme }: {
+  match: RecipeMatch; inventory: InventoryItem[]; boughtIngredients: Set<string>;
+  onBuyIngredient: (ing: RecipeIngredient, shortfallAmount: number) => void;
+  onClose: () => void; onConsume: (id: number, amount: number) => void;
+  defaultServings: number; darkMode: boolean; theme: Theme;
 }) {
-  const { recipe: r, matchedItems, missingIngredients } = match;
-  const stillMissing = missingIngredients.filter(i => !boughtIngredients.has(i));
+  const { recipe: r } = match;
+  const [servings, setServings] = useState(Math.max(1, defaultServings));
+  const [cooked, setCooked] = useState(false);
+
+  const scaledIngredients = useMemo(() => r.ingredients.map(ing => scaleIngredient(ing, r.servings, servings)), [r, servings]);
+  const scaledCalories = scaleCalories(r.calories, r.servings, servings);
+
+  // FIXED: searches the FULL inventory directly (not the pre-filtered,
+  // base-servings-sufficient subset in match.matchedItems), and uses
+  // hasEnoughQuantity against the CURRENT serving count. This is what
+  // makes "only 1g in stock" show correctly instead of a stale "Ready."
+  const ingredientStatus = useMemo(() => scaledIngredients.map(ing => {
+    const invItem = inventory.find(i => nameMatch(i.name, ing.name) && i.quantityAmount > 0);
+    const bought = boughtIngredients.has(ing.name);
+    const have = invItem ? invItem.quantityAmount : 0;
+    const haveUnit = invItem ? invItem.quantityUnit : ing.unit;
+    const sufficient = invItem ? hasEnoughQuantity(have, haveUnit, ing.amount, ing.unit) : bought;
+    return { ing, invItem, sufficient, have, haveUnit, bought };
+  }), [scaledIngredients, inventory, boughtIngredients]);
+
+  const canCookAtServings = ingredientStatus.every(s => s.sufficient);
+
+  const handleCook = () => {
+    ingredientStatus.forEach(s => { if (s.invItem) onConsume(s.invItem.id, Math.min(s.ing.amount, s.invItem.quantityAmount)); });
+    setCooked(true);
+    setTimeout(() => onClose(), 900);
+  };
 
   return (
     <Modal isOpen title={`${r.emoji} ${r.name}`} onClose={onClose} theme={theme}>
       <div className="animate-scale-in space-y-5">
-        <div className="flex flex-wrap gap-3">
-          {[{ label: 'Time', val: r.time }, { label: 'Difficulty', val: r.difficulty }, { label: 'Calories', val: `${r.calories} kcal` }, { label: 'Servings', val: `${r.servings}` }].map(m => (
-            <div key={m.label} className={`px-3 py-2 rounded-lg text-center ${darkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
-              <div className={`text-xs ${theme.textMuted}`}>{m.label}</div>
-              <div className={`font-semibold text-sm ${theme.text}`}>{m.val}</div>
+        {cooked ? (
+          <div className="flex flex-col items-center justify-center py-10 animate-scale-in">
+            <div className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center mb-3 animate-number-pop">
+              <CheckCircle2 className="w-9 h-9 text-emerald-400" />
             </div>
-          ))}
-        </div>
-
-        <div>
-          <h4 className={`font-semibold ${theme.text} mb-2`}>Ingredients</h4>
-          <div className="space-y-1">
-            {r.ingredients.map(ing => {
-              const have = matchedItems.some(i => nameMatch(i.name, ing)) || boughtIngredients.has(ing);
-              return (
-                <div key={ing} className={`flex items-center justify-between gap-2 text-sm ${have ? theme.text : theme.textMuted}`}>
-                  <span className="flex items-center gap-2">{have ? <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" /> : <ShoppingCart className="w-4 h-4 text-red-400 flex-shrink-0" />}{ing}</span>
-                  {!have && <button onClick={() => onBuyIngredient(ing)} className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors"><Plus className="w-3 h-3" /> Add</button>}
-                </div>
-              );
-            })}
+            <p className={`font-semibold ${theme.text}`}>Cooked! Ingredients deducted.</p>
           </div>
-        </div>
-
-        <div>
-          <h4 className={`font-semibold ${theme.text} mb-2`}>Instructions</h4>
-          <ol className="space-y-2">
-            {r.steps.map((step, i) => (
-              <li key={i} className="flex gap-3">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-sky-500 text-white text-xs font-bold flex items-center justify-center">{i + 1}</span>
-                <span className={`text-sm ${theme.textMuted} pt-0.5`}>{step}</span>
-              </li>
-            ))}
-          </ol>
-        </div>
-
-        {stillMissing.length === 0 ? (
-          <>
-            <p className={`text-xs ${theme.textMuted}`}>Cooking will use 1 unit of each ingredient from your inventory.</p>
-            <Button variant="primary" fullWidth onClick={() => onCook(match)}>🍳 Start Cooking</Button>
-          </>
         ) : (
-          <p className={`text-xs ${theme.textMuted}`}>Add the missing ingredients above before cooking.</p>
+          <>
+            <div className={`flex items-center justify-between p-3 rounded-xl ${darkMode ? 'bg-slate-800/60' : 'bg-slate-50'}`}>
+              <div className="flex items-center gap-2"><Users className="w-4 h-4 text-indigo-400" /><span className={`text-sm font-medium ${theme.text}`}>Cooking for</span></div>
+              <div className="flex items-center gap-3">
+                <button onClick={() => setServings(s => Math.max(1, s - 1))} className="w-7 h-7 rounded-lg bg-slate-600 hover:bg-slate-500 text-white flex items-center justify-center transition-colors"><Minus className="w-3.5 h-3.5" /></button>
+                <span className={`text-lg font-bold w-6 text-center ${theme.text}`}>{servings}</span>
+                <button onClick={() => setServings(s => Math.min(20, s + 1))} className="w-7 h-7 rounded-lg bg-slate-600 hover:bg-slate-500 text-white flex items-center justify-center transition-colors"><Plus className="w-3.5 h-3.5" /></button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              {[{ label: 'Time', val: r.time }, { label: 'Difficulty', val: r.difficulty }, { label: 'Calories', val: `${scaledCalories} kcal` }, { label: 'Servings', val: `${servings}` }].map(m => (
+                <div key={m.label} className={`px-3 py-2 rounded-lg text-center ${darkMode ? 'bg-slate-700' : 'bg-slate-100'}`}>
+                  <div className={`text-xs ${theme.textMuted}`}>{m.label}</div>
+                  <div className={`font-semibold text-sm ${theme.text}`}>{m.val}</div>
+                </div>
+              ))}
+            </div>
+
+            <div>
+              <h4 className={`font-semibold ${theme.text} mb-2`}>Ingredients for {servings} {servings === 1 ? 'person' : 'people'}</h4>
+              <div className="space-y-1.5">
+                {ingredientStatus.map(({ ing, invItem, sufficient, have, haveUnit, bought }) => {
+                  const shortfall = Math.max(0, ing.amount - (invItem ? have : 0));
+                  return (
+                    <div key={ing.name} className={`flex items-center justify-between gap-2 text-sm ${sufficient ? theme.text : theme.textMuted}`}>
+                      <span className="flex items-center gap-2 min-w-0">
+                        {sufficient ? <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" /> : <ShoppingCart className="w-4 h-4 text-red-400 flex-shrink-0" />}
+                        <span className="truncate">{ing.name} — {formatIngredientAmount(ing.amount, ing.unit)}</span>
+                      </span>
+                      {!sufficient && !bought && (
+                        // FIXED: adds the real shortfall amount, in the
+                        // recipe's own unit — was always "1 pcs" before.
+                        <button onClick={() => onBuyIngredient(ing, shortfall)} className="flex-shrink-0 flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors">
+                          <Plus className="w-3 h-3" /> Add {formatIngredientAmount(shortfall, ing.unit)}
+                        </button>
+                      )}
+                      {!sufficient && invItem && <span className="flex-shrink-0 text-xs text-amber-400">only {formatIngredientAmount(have, haveUnit)} in stock</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <h4 className={`font-semibold ${theme.text} mb-2`}>Instructions</h4>
+              <ol className="space-y-2">
+                {r.steps.map((step, i) => (
+                  <li key={i} className="flex gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-sky-500 text-white text-xs font-bold flex items-center justify-center">{i + 1}</span>
+                    <span className={`text-sm ${theme.textMuted} pt-0.5`}>{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
+            {canCookAtServings ? (
+              <Button variant="primary" fullWidth onClick={handleCook}>🍳 Cook for {servings} — deduct ingredients</Button>
+            ) : (
+              <p className={`text-xs ${theme.textMuted}`}>Add the missing/insufficient ingredients above before cooking for {servings}.</p>
+            )}
+          </>
         )}
       </div>
     </Modal>
   );
 }
 
-export function SuggestionsView({ inventory, onAddProduct, onConsume, ratings, onRate, dietaryPreferences = [], totalConsumed = 0, totalWasted = 0, darkMode, theme }: SuggestionsViewProps) {
+export function SuggestionsView({ inventory, onAddProduct, onAddProducts, onConsume, ratings, onRate, dietaryPreferences = [], totalConsumed = 0, totalWasted = 0, currentMode, householdSize, dailyCalorieGoal, darkMode, theme }: SuggestionsViewProps) {
   const [activeTab, setActiveTab] = useState<'recipes' | 'shopping'>('recipes');
   const [selectedMatch, setSelectedMatch] = useState<RecipeMatch | null>(null);
   const [categoryFilter, setCategoryFilter] = useState('All');
@@ -166,18 +230,48 @@ export function SuggestionsView({ inventory, onAddProduct, onConsume, ratings, o
   const canMake = matches.filter(m => m.canMake);
   const loved = matches.filter(m => (ratings[m.recipe.id] ?? 0) >= 4);
 
+  const modeInsight = useMemo(() => currentMode ? getModeInsight(currentMode, { urgentCount: urgent.length, cookableCount: canMake.length, dailyCalorieGoal: dailyCalorieGoal ?? null }) : null, [currentMode, urgent.length, canMake.length, dailyCalorieGoal]);
+
+  const defaultServingsFor = (recipe: any): number => {
+    if (currentMode === 'party') return Math.max((householdSize ?? 2) * 2, 6);
+    return householdSize ?? recipe.servings;
+  };
+
   const categories = ['All', 'Breakfast', 'Lunch', 'Dinner', 'Snack', 'Dessert'];
   const displayed = (categoryFilter === 'All' ? matches : matches.filter(m => m.recipe.category === categoryFilter))
     .filter(m => !dietaryFilter || m.recipe.tags.some(t => t.toLowerCase().includes(dietaryFilter.toLowerCase())))
     .slice(0, 12);
 
-  const shoppingSet = new Set<string>();
-  matches.slice(0, 8).forEach(m => m.missingIngredients.forEach(i => shoppingSet.add(i)));
-  const shoppingList = [...shoppingSet].filter(i => !boughtItems.has(i)).slice(0, 12);
+  // FIXED: was a bare Set<string> of names. Now a Map keeping each missing
+  // ingredient's REAL spec (amount+unit) from the first recipe that needed
+  // it, so "Add to fridge" adds a sensible amount instead of always "1 pcs."
+  const shoppingMap = new Map<string, RecipeIngredient>();
+  matches.slice(0, 8).forEach(m => {
+    m.recipe.ingredients.forEach(ing => {
+      if (m.missingIngredients.includes(ing.name) && !shoppingMap.has(ing.name)) shoppingMap.set(ing.name, ing);
+    });
+  });
+  const shoppingList = [...shoppingMap.entries()].filter(([name]) => !boughtItems.has(name)).slice(0, 12);
 
-  const handleCook = (match: RecipeMatch) => { match.matchedItems.forEach(item => onConsume(item.id, 1)); setSelectedMatch(null); };
-  const handleBuy = (name: string) => { onAddProduct(catalogLookup(name), 1, 'pcs'); setBoughtItems(prev => new Set([...prev, name])); };
-  const handleBuyAll = () => shoppingList.forEach(handleBuy);
+
+  const handleBuyIngredientForRecipe = (ing: RecipeIngredient, shortfallAmount: number) => {
+    onAddProduct(catalogLookup(ing.name), shortfallAmount > 0 ? shortfallAmount : ing.amount, ing.unit);
+    setBoughtItems(prev => new Set([...prev, ing.name]));
+  };
+
+  const handleBuy = ([name, ing]: [string, RecipeIngredient]) => {
+    onAddProduct(catalogLookup(name), ing.amount, ing.unit);
+    setBoughtItems(prev => new Set([...prev, name]));
+  };
+
+  // FIXED (issue 4): was `shoppingList.forEach(handleBuy)` — N independent
+  // concurrent POSTs racing on the same server-side list. Now builds the
+  // whole batch and sends it as ONE request via addProducts.
+  const handleBuyAll = () => {
+    const items = shoppingList.map(([, ing]) => ({ product: catalogLookup(ing.name), amount: ing.amount, unit: ing.unit }));
+    onAddProducts(items);
+    setBoughtItems(prev => new Set([...prev, ...shoppingList.map(([name]) => name)]));
+  };
 
   return (
     <div className="space-y-4 md:space-y-6 animate-fade-in">
@@ -187,6 +281,8 @@ export function SuggestionsView({ inventory, onAddProduct, onConsume, ratings, o
           <div className="flex flex-wrap gap-2">{urgent.slice(0, 5).map(m => <button key={m.recipe.id} onClick={() => setSelectedMatch(m)} className="text-sm px-3 py-1 rounded-full bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors">{m.recipe.emoji} {m.recipe.name}</button>)}</div>
         </div>
       )}
+
+      {modeInsight && <ModeInsightBanner message={modeInsight} darkMode={darkMode} theme={theme} />}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
@@ -218,17 +314,12 @@ export function SuggestionsView({ inventory, onAddProduct, onConsume, ratings, o
       {activeTab === 'recipes' && (
         <div className="space-y-3">
           <div className="flex gap-2 flex-wrap">{categories.map(cat => <button key={cat} onClick={() => setCategoryFilter(cat)} className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${categoryFilter === cat ? 'bg-sky-500 text-white' : darkMode ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>{cat}</button>)}</div>
-
           {dietaryPreferences.length > 0 && (
             <div className="flex gap-2 flex-wrap items-center">
               <span className={`text-xs ${theme.textMuted}`}>Your preferences:</span>
-              {dietaryPreferences.map(pref => (
-                <button key={pref} onClick={() => setDietaryFilter(f => f === pref ? null : pref)} className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${dietaryFilter === pref ? 'bg-indigo-500 text-white' : darkMode ? 'bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}>{pref}</button>
-              ))}
-              {dietaryFilter && <span className={`text-[10px] italic ${theme.textMuted}`}>Based on recipe tags — may be incomplete, always check ingredients.</span>}
+              {dietaryPreferences.map(pref => <button key={pref} onClick={() => setDietaryFilter(f => f === pref ? null : pref)} className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${dietaryFilter === pref ? 'bg-indigo-500 text-white' : darkMode ? 'bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`}>{pref}</button>)}
             </div>
           )}
-
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{displayed.map(match => <RecipeCard key={match.recipe.id} match={match} ratings={ratings} onRate={onRate} darkMode={darkMode} theme={theme} onSelect={() => setSelectedMatch(match)} />)}</div>
         </div>
       )}
@@ -239,24 +330,23 @@ export function SuggestionsView({ inventory, onAddProduct, onConsume, ratings, o
             <h3 className={`font-semibold ${theme.text} flex items-center gap-2`}><ShoppingCart className="w-4 h-4 text-indigo-400" /> Suggested Shopping List</h3>
             <div className="flex gap-2">
               {shoppingList.length > 0 && <button onClick={handleBuyAll} className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors"><PackageCheck className="w-3 h-3" /> Add all</button>}
-              <button onClick={() => exportShoppingList(shoppingList)} className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors"><Download className="w-3 h-3" /> Export</button>
+              <button onClick={() => exportShoppingList(shoppingList.map(([name]) => name))} className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-indigo-500/15 text-indigo-400 hover:bg-indigo-500/25 transition-colors"><Download className="w-3 h-3" /> Export</button>
             </div>
           </div>
-
           {shoppingList.length === 0 ? (
             <div className="text-center py-8"><CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2" /><p className={`text-sm ${theme.textMuted}`}>Your fridge has everything for the top recipes!</p></div>
           ) : (
-            <div className="space-y-2">{shoppingList.map(item => (
-              <div key={item} className={`flex items-center justify-between p-3 rounded-lg ${theme.hover}`}>
-                <div className="flex items-center gap-3"><ShoppingCart className={`w-4 h-4 ${theme.textMuted}`} /><span className={`text-sm ${theme.text}`}>{item}</span></div>
-                <button onClick={() => handleBuy(item)} className="text-xs px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-colors">Add to fridge</button>
+            <div className="space-y-2">{shoppingList.map(([name, ing]) => (
+              <div key={name} className={`flex items-center justify-between p-3 rounded-lg ${theme.hover}`}>
+                <div className="flex items-center gap-3"><ShoppingCart className={`w-4 h-4 ${theme.textMuted}`} /><span className={`text-sm ${theme.text}`}>{name}</span><span className={`text-xs ${theme.textMuted}`}>{formatIngredientAmount(ing.amount, ing.unit)}</span></div>
+                <button onClick={() => handleBuy([name, ing])} className="text-xs px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-colors">Add to fridge</button>
               </div>
             ))}</div>
           )}
         </div>
       )}
 
-      {selectedMatch && <RecipeModal match={selectedMatch} boughtIngredients={boughtItems} onBuyIngredient={handleBuy} onClose={() => setSelectedMatch(null)} onCook={handleCook} darkMode={darkMode} theme={theme} />}
+      {selectedMatch && <RecipeModal match={selectedMatch} inventory={inventory} boughtIngredients={boughtItems} onBuyIngredient={handleBuyIngredientForRecipe} onClose={() => setSelectedMatch(null)} onConsume={onConsume} defaultServings={defaultServingsFor(selectedMatch.recipe)} darkMode={darkMode} theme={theme} />}
     </div>
   );
 }

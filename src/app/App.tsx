@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Snowflake, UserPlus, LogIn } from 'lucide-react';
+import { Snowflake, UserPlus, LogIn, Sparkles } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Sidebar } from '../components/layout/Sidebar';
 import { MobileMenu } from '../components/layout/MobileMenu';
@@ -11,6 +11,10 @@ import { CalendarView } from '../features/calendar/CalendarView';
 import { ProfileView } from '../features/profile/ProfileView';
 import { AdminView } from '../features/admin/AdminView';
 import { AIChatWidget } from '../components/ui/AIChatWidget';
+import { ConfettiBurst } from '../components/ui/ConfettiBurst';
+import { MilestoneToast } from '../components/ui/MilestoneToast';
+import { PageTransition } from '../components/ui/PageTransition';
+import { GradientBlob } from '../components/ui/GradientBlob';
 import { useTheme } from '../hooks/useTheme';
 import { useAuth } from '../hooks/useAuth';
 import { useESP32Sensors } from '../hooks/useESP32Sensors';
@@ -21,16 +25,15 @@ import { useMLPredictions } from '../hooks/useMLPredictions';
 import { usePreferences } from '../hooks/usePreferences';
 import { useProfile } from '../hooks/useProfile';
 import { useCalendar } from '../hooks/useCalendar';
-import { getModeEffect } from '../data/modeEffects';
-import { Product } from '../types';
-import { MILESTONES } from '../data/milestones';
 import { useConfettiOnMilestone } from '../hooks/useConfettiOnMilestone';
-import { ConfettiBurst } from '../components/ui/ConfettiBurst';
-import { MilestoneToast } from '../components/ui/MilestoneToast';
+import { getModeEffect } from '../data/modeEffects';
+import { MILESTONES } from '../data/milestones';
+import { Product } from '../types';
 
 function App() {
   const { user, loading: authLoading, error: authError, setError: setAuthError, login, register, logout } = useAuth();
   const { darkMode, setDarkMode, theme } = useTheme();
+
   const token = user?.token ?? '';
   const username = user?.username ?? '';
   const role = user?.role ?? 'user';
@@ -43,20 +46,12 @@ function App() {
     setTargetTemp, setMode, isConnected,
   } = useESP32Sensors(addAlert, token, username);
 
-  const { inventory, loading: invLoading, addProduct, consumeItem, wasteItem, resetInventory } = useInventory(token, username);
-  const { consumptionHistory, logItem, totalConsumed, totalWasted, topItems, resetStats } = useConsumption(token, username);
+  const { inventory, loading: invLoading, addProduct, addProducts, consumeItem, wasteItem, resetInventory } = useInventory(token, username);
+  const { consumptionHistory, logItem, totalConsumed, totalWasted, topItems, resetStats, loading: consumptionLoading } = useConsumption(token, username);
   const { ml, advice, loading: mlLoading, aiLoading, mlUpdatedAt, adviceUpdatedAt, runPredictions, getAIAdvice } = useMLPredictions(token, username);
   const { ratings, rateRecipe } = usePreferences(token, username);
   const { profile, loading: profileLoading, updateFridgeInfo, logoutAllSessions, deleteAccount, exportData } = useProfile(token, username);
-  const { calendar, loading: calendarLoading, setMeal } = useCalendar(token, username);
-
-  // Must be called unconditionally, before any early return below — this
-  // relocation (it was previously after the "no user" return, further
-  // down in the file) is the actual fix for "Rendered more hooks than
-  // during the previous render." React tracks hooks by call order, not
-  // name, so a hook that only sometimes executes shifts every hook after
-  // it out of position the moment the render path changes.
-  const { burst: milestoneBurst, justUnlocked, clearUnlocked } = useConfettiOnMilestone(totalConsumed, MILESTONES);
+  const { calendar, loading: calendarLoading, setMeal, setMeals } = useCalendar(token, username);
 
   const [activeView, setActiveView] = useState('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -73,11 +68,10 @@ function App() {
   const [regUsername, setRegUser] = useState(''); const [regPassword, setRegPass] = useState('');
   const [regSuccess, setRegSuccess] = useState(''); const [showRegister, setShowReg] = useState(false);
 
+  const { burst: milestoneBurst, justUnlocked, clearUnlocked } = useConfettiOnMilestone(totalConsumed, MILESTONES, consumptionLoading);
+
   useEffect(() => { if (sensorData.connected) analyzeSensor(sensorData); }, [sensorData, analyzeSensor]);
 
-  // Pushes the current mode's offset to the server once a token exists —
-  // covers page refresh, where currentMode is restored from localStorage
-  // before the server has any idea what mode is active.
   useEffect(() => {
     if (!token) return;
     setMode(currentMode, modeEffect.tempOffsetC);
@@ -113,10 +107,14 @@ function App() {
 
   if (!user) {
     return (
-      <div className={`min-h-screen ${theme.bg} flex items-center justify-center p-4`}>
-        <div className={`${theme.card} border rounded-3xl p-8 md:p-10 shadow-2xl w-full max-w-md animate-scale-in`}>
+      <div className={`min-h-screen ${theme.bg} flex items-center justify-center p-4 relative`}>
+        <GradientBlob darkMode={darkMode} />
+        <div className={`${theme.card} border rounded-3xl p-8 md:p-10 shadow-2xl w-full max-w-md animate-scale-in relative`}>
           <div className="text-center mb-8">
-            <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center mb-4 shadow-lg shadow-sky-500/30 animate-glow-pulse"><Snowflake className="w-12 h-12 text-white" /></div>
+            <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-to-br from-sky-400 to-blue-600 flex items-center justify-center mb-4 shadow-lg shadow-sky-500/30 animate-glow-pulse relative">
+              <Snowflake className="w-12 h-12 text-white" />
+              <Sparkles className="w-5 h-5 text-amber-300 absolute -top-1.5 -right-1.5 animate-number-pop" />
+            </div>
             <h1 className={`text-3xl font-bold ${theme.text} mb-1`}>Smart Fridge</h1>
             <p className={`text-sm ${theme.textMuted}`}>Intelligent Food Management</p>
           </div>
@@ -130,9 +128,16 @@ function App() {
           <div className="space-y-4">
             {!showRegister ? (
               <>
-                <input type="text" value={loginUsername} onChange={e => { setLoginUser(e.target.value); setAuthError(null); }} onKeyDown={e => e.key === 'Enter' && login(loginUsername, loginPassword)} placeholder="Username" autoComplete="username" className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all ${darkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-500'}`} />
-                <input type="password" value={loginPassword} onChange={e => { setLoginPass(e.target.value); setAuthError(null); }} onKeyDown={e => e.key === 'Enter' && login(loginUsername, loginPassword)} placeholder="Password" autoComplete="current-password" className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all ${darkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-500'}`} />
-                <button onClick={() => login(loginUsername, loginPassword)} className="w-full py-3 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white rounded-xl font-semibold transition-all active:scale-95 shadow-lg shadow-sky-500/20">Sign in</button>
+                <div className="animate-slide-down" style={{ animationDelay: '50ms' }}>
+                  <input type="text" value={loginUsername} onChange={e => { setLoginUser(e.target.value); setAuthError(null); }} onKeyDown={e => e.key === 'Enter' && login(loginUsername, loginPassword)} placeholder="Username" autoComplete="username" className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all ${darkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-500'}`} />
+                </div>
+                <div className="animate-slide-down" style={{ animationDelay: '100ms' }}>
+                  <input type="password" value={loginPassword} onChange={e => { setLoginPass(e.target.value); setAuthError(null); }} onKeyDown={e => e.key === 'Enter' && login(loginUsername, loginPassword)} placeholder="Password" autoComplete="current-password" className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-sky-500 transition-all ${darkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-500'}`} />
+                </div>
+                <button onClick={() => login(loginUsername, loginPassword)} className="relative w-full py-3 overflow-hidden bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white rounded-xl font-semibold transition-all active:scale-95 shadow-lg shadow-sky-500/20 group">
+                  <span className="relative z-10">Sign in</span>
+                  <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
+                </button>
                 <div className={`p-3 rounded-xl text-xs space-y-0.5 ${darkMode ? 'bg-slate-700/50' : 'bg-slate-100'}`}><p className={`font-semibold ${theme.textMuted} mb-1`}>Default accounts:</p><p className={theme.textMuted}>admin / admin123 · user / user123</p></div>
               </>
             ) : (
@@ -153,8 +158,7 @@ function App() {
       case 'dashboard':
         return (
           <DashboardView
-            sensorData={sensorData} alerts={alerts} inventory={inventory}
-            totalConsumed={totalConsumed} totalWasted={totalWasted}
+            sensorData={sensorData} alerts={alerts} inventory={inventory} totalConsumed={totalConsumed} totalWasted={totalWasted}
             currentMode={currentMode} setCurrentMode={setCurrentMode}
             targetTemp={targetTemp} goalTemp={goalTemp} aiAdjusted={aiAdjusted} aiReason={aiReason}
             modeAdjusted={modeAdjusted} modeOffsetApplied={modeOffsetApplied} modeBanner={modeEffect.banner}
@@ -169,7 +173,15 @@ function App() {
       case 'inventory':
         return <InventoryView inventory={inventory} loading={invLoading} topItems={topItems} onAddProduct={handleAddProduct} onConsume={handleConsume} onWaste={handleWaste} darkMode={darkMode} theme={theme} />;
       case 'suggestions':
-        return <SuggestionsView inventory={inventory} onAddProduct={handleAddProduct} onConsume={handleConsume} ratings={ratings} onRate={rateRecipe} dietaryPreferences={profile?.dietaryPreferences ?? []} totalConsumed={totalConsumed} totalWasted={totalWasted} darkMode={darkMode} theme={theme} />;
+        return (
+          <SuggestionsView
+            inventory={inventory} onAddProduct={handleAddProduct} onAddProducts={addProducts} onConsume={handleConsume}
+            ratings={ratings} onRate={rateRecipe} dietaryPreferences={profile?.dietaryPreferences ?? []}
+            totalConsumed={totalConsumed} totalWasted={totalWasted}
+            currentMode={currentMode} householdSize={profile?.householdSize ?? null} dailyCalorieGoal={profile?.dailyCalorieGoal ?? null}
+            darkMode={darkMode} theme={theme}
+          />
+        );
       case 'environment':
         return (
           <EnvironmentView
@@ -183,7 +195,7 @@ function App() {
           />
         );
       case 'calendar':
-        return <CalendarView calendar={calendar} loading={calendarLoading} onSetMeal={setMeal} dailyCalorieGoal={profile?.dailyCalorieGoal ?? null} consumptionHistory={consumptionHistory} inventory={inventory} ratings={ratings} darkMode={darkMode} theme={theme} />;
+        return <CalendarView calendar={calendar} loading={calendarLoading} onSetMeal={setMeal} onSetMeals={setMeals} dailyCalorieGoal={profile?.dailyCalorieGoal ?? null} consumptionHistory={consumptionHistory} inventory={inventory} ratings={ratings} darkMode={darkMode} theme={theme} />;
       case 'profile':
         return <ProfileView token={token} username={username} darkMode={darkMode} theme={theme} profile={profile} profileLoading={profileLoading} totalConsumed={totalConsumed} onUpdateFridgeInfo={updateFridgeInfo} onResetInventory={resetInventory} onResetStats={resetStats} onLogoutAllSessions={logoutAllSessions} onDeleteAccount={deleteAccount} onExportData={exportData} onLogout={logout} />;
       case 'admin':
@@ -194,18 +206,15 @@ function App() {
 
   return (
     <div className={`min-h-screen ${theme.bg} transition-colors duration-500`}>
-      {/* These previously sat as disconnected {expression} statements above
-          renderView() — valid syntax, but never part of any returned JSX,
-          so they built a ConfettiBurst/MilestoneToast every render and threw
-          it away. Now they're real children of the tree, so they actually
-          show up regardless of which tab is active. */}
       {milestoneBurst && <ConfettiBurst />}
       {justUnlocked && <MilestoneToast label={justUnlocked.label} icon={justUnlocked.icon} onDismiss={clearUnlocked} />}
       <Header username={username} role={user.role} darkMode={darkMode} setDarkMode={setDarkMode} onLogout={logout} mobileMenuOpen={mobileOpen} setMobileMenuOpen={setMobileOpen} isConnected={isConnected} theme={theme} />
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-8 flex gap-4 md:gap-6">
         <Sidebar activeView={activeView} setActiveView={setActiveView} theme={theme} darkMode={darkMode} role={role} />
         <MobileMenu isOpen={mobileOpen} activeView={activeView} setActiveView={setActiveView} onClose={() => setMobileOpen(false)} theme={theme} darkMode={darkMode} role={role} />
-        <main className="flex-1 min-w-0 space-y-4 md:space-y-6">{renderView()}</main>
+        <main className="flex-1 min-w-0">
+          <PageTransition activeKey={activeView}>{renderView()}</PageTransition>
+        </main>
       </div>
       <AIChatWidget token={token} temperature={sensorData.temperature} humidity={sensorData.humidity} inventory={inventory} currentMode={currentMode} onApplyMode={setCurrentMode} darkMode={darkMode} theme={theme} />
     </div>

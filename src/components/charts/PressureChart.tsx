@@ -1,14 +1,12 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { formatTimestampTick, computeForecastCurve, exportChartCSV, FixedBucket } from '../../utils/chartUtils';
 import { ChartHeader, ChartFooter, ChartEmptyState } from './ChartControls';
 
-interface PressureChartProps { data: FixedBucket[]; darkMode: boolean; windowStart: number; windowEnd: number; }
+interface PressureChartProps { data: FixedBucket[]; darkMode: boolean; windowStart: number; windowEnd: number; showForecast: boolean; }
 const WEIGHT_BOUNDS: [number, number] = [0, 50];
 
-export function PressureChart({ data, darkMode, windowStart, windowEnd }: PressureChartProps) {
-  const [showForecast, setShowForecast] = useState(false);
-
+export function PressureChart({ data, darkMode, windowStart, windowEnd, showForecast }: PressureChartProps) {
   const allEmpty = data.every(d => d.value === null);
   const span = windowEnd - windowStart;
   const realPoints = data.filter(d => d.value !== null).map(d => ({ time: d.time, value: d.value as number, timestamp: d.timestamp }));
@@ -27,10 +25,10 @@ export function PressureChart({ data, darkMode, windowStart, windowEnd }: Pressu
 
   return (
     <div>
-      <ChartHeader darkMode={darkMode} showForecast={showForecast} onToggleForecast={() => setShowForecast(s => !s)} onExport={() => exportChartCSV(realPoints, 'Weight', 'kg')} />
+      <ChartHeader darkMode={darkMode} onExport={() => exportChartCSV(realPoints, 'Weight', 'kg')} />
       {allEmpty ? <ChartEmptyState darkMode={darkMode} /> : (
         <ResponsiveContainer width="100%" height={250}>
-          <ComposedChart data={combined} syncId="fridge-sensors" margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+          <ComposedChart data={combined} syncId="fridge-sensors" syncMethod="value" margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
             <XAxis dataKey="timestamp" type="number" domain={[windowStart, windowEnd]} scale="time" tickFormatter={(ts: number) => formatTimestampTick(ts, span)} stroke={axisColor} style={{ fontSize: '11px' }} tick={{ fill: axisColor }} />
             <YAxis domain={['dataMin - 0.2', 'dataMax + 0.2']} stroke={axisColor} style={{ fontSize: '11px' }} tick={{ fill: axisColor }} />
