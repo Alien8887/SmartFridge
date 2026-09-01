@@ -3,8 +3,9 @@ const { redis } = require('../lib/redis');
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization' };
 async function getUser(req) { const auth = (req.headers.authorization || '').slice(7); const session = await redis.get(`session:${auth}`); return session && Date.now() < session.expiresAt ? session.username : null; }
 
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']; // Monday-first — matches the client's useConsumption.ts and Calendar's own week grid
 function emptyWeek() { return DAYS.map(day => ({ day, dairy: 0, meat: 0, vegetables: 0, fruits: 0 })); }
+function todayDayName() { const jsDay = new Date().getDay(); return DAYS[(jsDay + 6) % 7]; } // getDay() is native Sun-first (0-6); remapped to the Monday-first DAYS order above
 
 module.exports = async function handler(req, res) {
   Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
@@ -47,11 +48,6 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // ── NEW (issue 4): batch inventory add — ONE read-modify-write for
-    // the whole batch. "Add all" in Shopping List previously fired N
-    // independent concurrent POSTs, each doing its own read-modify-write
-    // on the same list — concurrent requests raced each other, and
-    // whichever finished last silently overwrote the others' additions.
     if (resource === 'inventory-batch' && req.method === 'POST') {
       const { items } = req.body || {};
       if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items array is required' });
@@ -102,7 +98,7 @@ module.exports = async function handler(req, res) {
           data.totalWasted = +(((data.totalWasted || 0) + amt).toFixed(3));
         } else {
           data.totalConsumed = +(((data.totalConsumed || 0) + amt).toFixed(3));
-          const todayName = DAYS[new Date().getDay()];
+          const todayName = todayDayName();
           const row = data.week.find(r => r.day === todayName);
           const k = (category || '').toLowerCase();
           if (row && k in row) row[k] += 1;
@@ -143,13 +139,6 @@ module.exports = async function handler(req, res) {
       }
     }
 
-    // ── NEW (issue 2): batch calendar update — ONE read-modify-write for
-    // a whole set of slot changes. Fill Week and Clear Week now call this
-    // instead of looping 21 individual POSTs, which is the actual fix for
-    // "cleared next week and old suggestions came back" — each individual
-    // POST did its own read-modify-write on the SAME document; concurrent
-    // requests raced, and whichever finished last silently reverted every
-    // other request's change back to a stale pre-batch snapshot.
     if (resource === 'calendar-batch' && req.method === 'POST') {
       const { updates } = req.body || {};
       if (!Array.isArray(updates) || updates.length === 0) return res.status(400).json({ error: 'updates array is required' });

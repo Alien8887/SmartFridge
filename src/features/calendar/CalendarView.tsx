@@ -135,8 +135,10 @@ export function CalendarView({ calendar, loading, onSetMeal, onSetMeals, dailyCa
       />
 
       {copySource && (
-        <div className="animate-slide-down flex items-center justify-between bg-teal-500/10 border border-teal-500/30 rounded-xl p-3">
-          <span className="text-sm text-teal-400">Copying {formatDayLabel(new Date(copySource))} — click another day's copy icon to paste, or cancel.</span>
+        <div className="animate-slide-down flex items-center justify-between bg-indigo-500/10 border border-indigo-500/30 rounded-xl p-3">
+          <span className="text-sm text-indigo-400 flex items-center gap-1.5">
+            <Copy className="w-4 h-4" /> Copying <strong>{formatDayLabel(new Date(copySource))}</strong> (highlighted below) — click any other day to paste into it.
+          </span>
           <button onClick={() => setCopySource(null)} className="text-xs px-2 py-1 rounded-lg bg-slate-600 text-white hover:bg-slate-500 transition-colors">Cancel</button>
         </div>
       )}
@@ -170,12 +172,12 @@ export function CalendarView({ calendar, loading, onSetMeal, onSetMeals, dailyCa
             const goalPct = dailyCalorieGoal ? Math.round((calories / dailyCalorieGoal) * 100) : null;
 
             return (
-              <div key={dateKey} className={`rounded-xl border p-3 flex flex-col gap-2 animate-fade-in card-hover ${theme.card} ${today ? 'border-teal-500 ring-1 ring-teal-500/30' : darkMode ? 'border-slate-700' : 'border-slate-200'}`}>
+              <div key={dateKey} className={`rounded-xl border p-3 flex flex-col gap-2 animate-fade-in card-hover ${theme.card} ${copySource === dateKey ? 'border-indigo-500 ring-2 ring-indigo-500/40 scale-[1.02]' : today ? 'border-teal-500 ring-1 ring-teal-500/30' : darkMode ? 'border-slate-700' : 'border-slate-200'}`}>
                 <div className="flex items-center justify-between">
                   <span className={`text-xs font-semibold ${today ? 'text-teal-400' : theme.textMuted}`}>{formatDayLabel(day)}</span>
                   <div className="flex items-center gap-1">
                     {today && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-500 text-white font-medium">Today</span>}
-                    <button onClick={() => copySource === dateKey ? setCopySource(null) : (copySource ? copyDayInto(dateKey) : setCopySource(dateKey))} title={copySource && copySource !== dateKey ? 'Paste here' : 'Copy this day'} className={`p-1 rounded-md transition-colors ${copySource === dateKey ? 'bg-teal-500 text-white' : `${theme.hover} ${theme.textMuted}`}`}>
+                    <button onClick={() => copySource === dateKey ? setCopySource(null) : (copySource ? copyDayInto(dateKey) : setCopySource(dateKey))} title={copySource === dateKey ? 'This is the copy source — click to cancel' : copySource ? 'Paste here' : 'Copy this day'} className={`p-1 rounded-md transition-colors ${copySource === dateKey ? 'bg-indigo-500 text-white' : darkMode ? 'text-slate-400 hover:bg-slate-700' : 'text-slate-400 hover:bg-slate-100'}`}>
                       {copySource === dateKey ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                     </button>
                   </div>

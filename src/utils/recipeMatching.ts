@@ -2,6 +2,7 @@ import { InventoryItem } from '../types';
 import { recipes, Recipe } from '../data/demoMeals';
 import { getDaysUntilExpiry } from './expiryUtils';
 import { hasEnoughQuantity } from './unitUtils';
+import { scaleIngredient } from './recipeScaling';
 
 export interface RecipeMatch {
   recipe: Recipe;
@@ -12,6 +13,7 @@ export interface RecipeMatch {
   urgencyLevel: 'urgent' | 'soon' | 'normal';
   minDays: number;
   matchedPreferences: string[];
+  servingsUsed: number;
 }
 
 export function nameMatch(inventoryName: string, recipeIngName: string): boolean {
@@ -20,17 +22,22 @@ export function nameMatch(inventoryName: string, recipeIngName: string): boolean
   return inv.includes(rec) || rec.includes(inv.split(' ')[0]);
 }
 
-export function buildMatches(inv: InventoryItem[], ratings: Record<string, number>, dietaryPreferences: string[] = []): RecipeMatch[] {
+export function buildMatches(inv: InventoryItem[], ratings: Record<string, number>, dietaryPreferences: string[] = [], householdSize?: number | null): RecipeMatch[] {
   return recipes.map(recipe => {
+    // FIXED: was always checked against the recipe's OWN arbitrary base
+    // serving count (e.g. 2), never the actual household size — so the
+    // list's "Ready" badge and the cooking modal's live check could
+    // disagree once you scaled servings. Both now use the same real
+    // target, closing that gap at the source.
+    const targetServings = householdSize && householdSize > 0 ? householdSize : recipe.servings;
     const matchedItems: InventoryItem[] = [];
     const missing: string[] = [];
     let minDays = 999;
 
     recipe.ingredients.forEach(ing => {
+      const scaledIng = scaleIngredient(ing, recipe.servings, targetServings);
       const candidate = inv.find(item => nameMatch(item.name, ing.name) && item.quantityAmount > 0);
-      // FIXED: was presence-only (item.quantityAmount > 0). Now genuinely
-      // checks the real amount against what the recipe needs.
-      const sufficient = candidate ? hasEnoughQuantity(candidate.quantityAmount, candidate.quantityUnit, ing.amount, ing.unit) : false;
+      const sufficient = candidate ? hasEnoughQuantity(candidate.quantityAmount, candidate.quantityUnit, scaledIng.amount, scaledIng.unit) : false;
       if (candidate && sufficient) {
         matchedItems.push(candidate);
         const d = getDaysUntilExpiry(candidate.expiry, candidate.addedDate);
@@ -44,7 +51,7 @@ export function buildMatches(inv: InventoryItem[], ratings: Record<string, numbe
     const urgencyLevel: RecipeMatch['urgencyLevel'] = minDays <= 1 ? 'urgent' : minDays <= 3 ? 'soon' : 'normal';
     const matchedPreferences = dietaryPreferences.filter(pref => recipe.tags.some(t => t.toLowerCase().includes(pref.toLowerCase())));
 
-    return { recipe, canMake: missing.length === 0, matchScore, matchedItems, missingIngredients: missing, urgencyLevel, minDays: minDays === 999 ? 99 : minDays, matchedPreferences };
+    return { recipe, canMake: missing.length === 0, matchScore, matchedItems, missingIngredients: missing, urgencyLevel, minDays: minDays === 999 ? 99 : minDays, matchedPreferences, servingsUsed: targetServings };
   }).sort((a, b) => {
     const uo = { urgent: 0, soon: 1, normal: 2 };
     const uDiff = uo[a.urgencyLevel] - uo[b.urgencyLevel];

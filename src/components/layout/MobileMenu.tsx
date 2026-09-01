@@ -26,7 +26,8 @@ export function MobileMenu({ isOpen, activeView, setActiveView, onClose, theme, 
   return (
     <>
       <div className="fixed inset-0 bg-black/50 z-30 lg:hidden" onClick={onClose} aria-hidden="true" />
-      <nav ref={menuRef} className={`fixed top-[72px] left-0 right-0 z-40 lg:hidden ${theme.card} ${theme.border} border-b shadow-lg max-h-[calc(100vh-72px)] overflow-y-auto animate-slide-down`} role="navigation" aria-label="Mobile navigation">
+      {/* FIXED: role="navigation" removed — <nav> already has this implicit role */}
+      <nav ref={menuRef} className={`fixed top-[72px] left-0 right-0 z-40 lg:hidden ${theme.card} ${theme.border} border-b shadow-lg max-h-[calc(100vh-72px)] overflow-y-auto animate-slide-down`} aria-label="Mobile navigation">
         <ul className="space-y-2 list-none p-4 m-0">
           {items.map(({ id, icon: Icon, label, description }) => {
             const active = activeView === id;

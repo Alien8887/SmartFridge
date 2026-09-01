@@ -7,7 +7,7 @@ interface SidebarProps { activeView: string; setActiveView: (view: string) => vo
 export function Sidebar({ activeView, setActiveView, theme, darkMode, role }: SidebarProps) {
   const items = NAV_ITEMS.filter(item => !item.adminOnly || role === 'admin');
   return (
-    <aside className={`hidden lg:block ${theme.card} ${theme.border} border rounded-2xl p-4 shadow-lg w-64 shrink-0 h-fit sticky top-24`} aria-label="Main navigation">
+    <aside className={`hidden lg:block ${theme.card} ${theme.border ?? ''} border rounded-2xl p-4 shadow-lg w-64 shrink-0 h-fit sticky top-24`} aria-label="Main navigation">
       <nav>
         <ul className="space-y-2 list-none p-0 m-0">
           {items.map(({ id, icon: Icon, label, description }) => {

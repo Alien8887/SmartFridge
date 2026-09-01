@@ -68,7 +68,7 @@ function App() {
   const [regUsername, setRegUser] = useState(''); const [regPassword, setRegPass] = useState('');
   const [regSuccess, setRegSuccess] = useState(''); const [showRegister, setShowReg] = useState(false);
 
-  const { burst: milestoneBurst, justUnlocked, clearUnlocked } = useConfettiOnMilestone(totalConsumed, MILESTONES, consumptionLoading);
+  const { burst: milestoneBurst, justUnlocked, clearUnlocked } = useConfettiOnMilestone(totalConsumed, MILESTONES, consumptionLoading, username);
 
   useEffect(() => { if (sensorData.connected) analyzeSensor(sensorData); }, [sensorData, analyzeSensor]);
 

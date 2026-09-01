@@ -15,7 +15,6 @@ export interface MLResult {
 }
 export interface AdviceRecommendation { priority: 'high' | 'medium' | 'low'; action: string; reason: string; impact: string; }
 export interface SmartAdvice { available: boolean; recommendations: AdviceRecommendation[]; overallAssessment: string; urgentAction: string | null; }
-
 interface InventoryLike { id: number; name: string; category: string; expiry: number; addedDate: number; }
 
 export function useMLPredictions(token: string, username: string) {
@@ -28,14 +27,18 @@ export function useMLPredictions(token: string, username: string) {
   const lastRunRef = useRef(0);
   const lastUserRef = useRef<string | null>(null);
 
-  // Neither of these belongs to server-stored per-account data, so nothing
-  // else would clear them on logout/login — this stops one account's
-  // analysis from lingering on screen after switching to another.
+  // FIXED: App.tsx has been calling this hook as useMLPredictions(token,
+  // username) — two arguments — while this file only ever declared one
+  // parameter. That's a TS2554 arity error, promoted to a build failure
+  // under CI=true. Adding username properly also closes a real gap: without
+  // it, switching accounts in the same tab could briefly show the PREVIOUS
+  // user's AI analysis until a fresh runPredictions() call happened to fire.
   useEffect(() => {
-    if (lastUserRef.current === username) return;
-    lastUserRef.current = username;
-    setMl(null); setAdvice(null); setMlUpdatedAt(null); setAdviceUpdatedAt(null);
-    lastRunRef.current = 0;
+    if (lastUserRef.current !== username) {
+      lastUserRef.current = username;
+      setMl(null); setAdvice(null); setMlUpdatedAt(null); setAdviceUpdatedAt(null);
+      lastRunRef.current = 0;
+    }
   }, [username]);
 
   const runPredictions = useCallback(async (temperature: number, humidity: number, inventory: InventoryLike[], force = false) => {
@@ -46,7 +49,7 @@ export function useMLPredictions(token: string, username: string) {
     try {
       const r = await fetch(`${BASE}/api/ai?action=predict`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ temperature, humidity, inventory }) });
       if (r.ok) { setMl(await r.json()); setMlUpdatedAt(Date.now()); }
-    } catch { /* keep last good result */ }
+    } catch { /* keep last good result on screen */ }
     finally { setLoading(false); }
   }, [token]);
 

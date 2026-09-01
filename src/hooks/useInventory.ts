@@ -67,6 +67,10 @@ async function postServerItemsBatch(items: InventoryItem[], token: string) {
 export function useInventory(token: string, username: string) {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
+  // Distinguishes "brand-new account with genuinely nothing yet" from "the
+  // request actually failed" — both used to look IDENTICAL on screen
+  // because every catch block was silent.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const loadedForUser = useRef<string | null>(null);
 
   const persist = useCallback((updater: (prev: InventoryItem[]) => InventoryItem[]) => {
@@ -74,11 +78,12 @@ export function useInventory(token: string, username: string) {
   }, [username]);
 
   useEffect(() => {
-    if (!username) { setInventory([]); setLoading(false); return; }
+    if (!username) { setInventory([]); setLoading(false); setLoadError(null); return; }
     if (loadedForUser.current === username) return;
     loadedForUser.current = username;
     setInventory([]);
     setLoading(true);
+    setLoadError(null);
 
     const cached = loadFromStorage(username);
     if (cached.length) setInventory(cached);
@@ -88,7 +93,7 @@ export function useInventory(token: string, username: string) {
     (async () => {
       try {
         const r = await fetch(`${BASE}/api/user-data?resource=inventory`, { headers: { Authorization: `Bearer ${token}` } });
-        if (!r.ok) throw new Error('fetch failed');
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
         const raw: any[] = await r.json();
         if (Array.isArray(raw) && raw.length > 0) {
           const sanitized = raw.map(sanitizeItem);
@@ -97,8 +102,13 @@ export function useInventory(token: string, username: string) {
         } else if (cached.length > 0) {
           for (const item of cached) await postServerItem(item, token);
         }
-      } catch { /* offline — keep local cache */ }
-      finally { setLoading(false); }
+        // else: genuinely empty for a new account — not an error, loadError stays null
+      } catch (e) {
+        setLoadError(e instanceof Error ? e.message : 'Could not reach the server');
+        // keep whatever local cache was already shown optimistically above
+      } finally {
+        setLoading(false);
+      }
     })();
   }, [username, token]);
 
@@ -121,9 +131,8 @@ export function useInventory(token: string, username: string) {
     });
   }, [persist, token]);
 
-  /** Adds many products atomically — merges into existing batches locally
-   *  the same way addProduct does, then sends ONE batch request for
-   *  whatever's genuinely new. Shopping List's "Add all" calls this. */
+  /** Adds many products atomically — one batch server request instead of
+   *  N concurrent independent ones racing each other. */
   const addProducts = useCallback((items: { product: Product; amount: number; unit: string }[]) => {
     if (items.length === 0) return;
     persist(prev => {
@@ -183,5 +192,5 @@ export function useInventory(token: string, username: string) {
     if (token) { try { await fetch(`${BASE}/api/user-data?resource=reset`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ target: 'inventory' }) }); } catch { /* local reset already applied */ } }
   }, [username, token]);
 
-  return { inventory, loading, addProduct, addProducts, consumeItem, wasteItem, removeExpiredItems, resetInventory };
+  return { inventory, loading, loadError, addProduct, addProducts, consumeItem, wasteItem, removeExpiredItems, resetInventory };
 }

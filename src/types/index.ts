@@ -1,3 +1,5 @@
+import { LucideIcon } from 'lucide-react';
+
 export interface SensorData {
   temperature: number;
   humidity: number;
@@ -26,22 +28,10 @@ export interface Product {
   defaultUnit?: string;
 }
 
-export interface Alert {
-  id: number;
-  message: string;
-  timestamp: Date;
-}
-
-export interface MealSuggestion {
-  name: string;
-  ingredients: string[];
-  time: string;
-}
-
 export interface Mode {
   id: string;
   name: string;
-  icon: any;
+  icon: LucideIcon; // was `any` — disabled type checking on this field entirely
 }
 
 export interface Theme {
@@ -75,6 +65,11 @@ export interface CategoryData {
   color: string;
 }
 
+/** Raw, per-poll sensor readings (useESP32Sensors' temperatureHistory /
+ *  humidityHistory / pressureHistory) — value is always a real number the
+ *  instant it's pushed. Distinct on purpose from chartUtils.ts's
+ *  FixedBucket, which represents POST-bucketing display data where a slot
+ *  can genuinely have no reading (value: number | null). */
 export interface ChartDataPoint {
   time: string;
   value: number;

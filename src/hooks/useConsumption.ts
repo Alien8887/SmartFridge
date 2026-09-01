@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { ConsumptionData } from '../types';
 import { roundTo } from '../utils/numberUtils';
-import { weekKeyFor } from '../utils/dateUtils';
+import { weekKeyFor, mondayFirstDayIndex } from '../utils/dateUtils';
 
 const BASE = process.env.REACT_APP_API_URL || '';
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// Monday-first — matches Calendar's own week grid and api/user-data.js's
+// server-side DAYS order. Native Date.getDay() is Sun-first (0-6);
+// mondayFirstDayIndex() remaps it to line up with this array.
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export interface TopItem { name: string; count: number; }
 
@@ -29,7 +32,10 @@ export function useConsumption(token: string, username: string) {
   const [totalConsumed, setTotalConsumed] = useState(0);
   const [totalWasted, setTotalWasted] = useState(0);
   const [topItems, setTopItems] = useState<TopItem[]>([]);
-  const [loading, setLoading] = useState(true); // NEW — drives useConfettiOnMilestone's arming
+  const [loading, setLoading] = useState(true);
+  // Same distinction as useInventory's loadError — "empty because you're
+  // new" vs "empty because the request failed" used to be indistinguishable.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const loadedForUser = useRef<string | null>(null);
   const currentWeekKeyRef = useRef(weekKeyFor(new Date()));
 
@@ -46,10 +52,11 @@ export function useConsumption(token: string, username: string) {
   }, [username]);
 
   useEffect(() => {
-    if (!username) { setConsumptionHistory(makeInitial()); setTotalConsumed(0); setTotalWasted(0); setTopItems([]); setLoading(false); return; }
+    if (!username) { setConsumptionHistory(makeInitial()); setTotalConsumed(0); setTotalWasted(0); setTopItems([]); setLoading(false); setLoadError(null); return; }
     if (loadedForUser.current === username) return;
     loadedForUser.current = username;
     setLoading(true);
+    setLoadError(null);
 
     const wk = weekKeyFor(new Date());
     currentWeekKeyRef.current = wk;
@@ -60,15 +67,16 @@ export function useConsumption(token: string, username: string) {
     if (!token) { setLoading(false); return; }
 
     fetch(`${BASE}/api/user-data?resource=consumption&weekKey=${wk}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(r => { if (!r.ok) throw new Error(`Server returned ${r.status}`); return r.json(); })
       .then(d => {
         if (d.week) setConsumptionHistory(d.week);
         if (typeof d.totalConsumed === 'number') setTotalConsumed(d.totalConsumed);
         if (typeof d.totalWasted === 'number') setTotalWasted(d.totalWasted);
         if (Array.isArray(d.topItems)) setTopItems(d.topItems);
+        setLoadError(null);
         try { localStorage.setItem(weekMetaKey(username), wk); } catch { /* ignore */ }
       })
-      .catch(() => { /* keep local cache */ })
+      .catch(e => setLoadError(e instanceof Error ? e.message : 'Could not reach the server'))
       .finally(() => setLoading(false));
   }, [username, token]);
 
@@ -81,7 +89,7 @@ export function useConsumption(token: string, username: string) {
     if (action === 'waste') {
       setTotalWasted(prev => { const next = roundTo(prev + amt, 3); try { localStorage.setItem(numKey(username, 'total-wasted'), String(next)); } catch {} return next; });
     } else {
-      const todayName = DAYS[new Date().getDay()];
+      const todayName = DAYS[mondayFirstDayIndex(new Date())];
       setConsumptionHistory(prev => {
         const updated = prev.map(row => { if (row.day !== todayName) return row; const key = category.toLowerCase() as keyof ConsumptionData; if (key === 'day' || !(key in row)) return row; return { ...row, [key]: (row[key] as number) + 1 }; });
         try { localStorage.setItem(weekStorageKey(username), JSON.stringify(updated)); localStorage.setItem(weekMetaKey(username), wk); } catch {}
@@ -101,5 +109,5 @@ export function useConsumption(token: string, username: string) {
     if (token) { try { await fetch(`${BASE}/api/user-data?resource=reset`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ target: 'consumption' }) }); } catch { /* local reset already applied */ } }
   }, [username, token]);
 
-  return { consumptionHistory, logItem, totalConsumed, totalWasted, topItems, resetStats, loading };
+  return { consumptionHistory, logItem, totalConsumed, totalWasted, topItems, resetStats, loading, loadError };
 }

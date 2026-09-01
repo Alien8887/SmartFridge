@@ -38,3 +38,16 @@ export function isToday(d: Date): boolean {
 export function weekKeyFor(d: Date): string {
   return toDateKey(startOfWeek(d));
 }
+
+/** Monday-first day order, matching Calendar's own week definition —
+ *  used to bring Weekly Consumption onto the SAME week boundary as the
+ *  Calendar tab, instead of the two silently disagreeing about what
+ *  "this week" means. */
+export function mondayFirstDayIndex(date: Date): number {
+  const jsDay = date.getDay(); // 0=Sun..6=Sat
+  return (jsDay + 6) % 7;      // remapped so Monday=0..Sunday=6
+}
+
+export function datesForWeek(weekStartDate: Date): string[] {
+  return Array.from({ length: 7 }, (_, i) => toDateKey(addDays(weekStartDate, i)));
+}

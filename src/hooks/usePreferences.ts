@@ -8,9 +8,13 @@ export function usePreferences(token: string, username: string) {
 
   useEffect(() => {
     if (!username) { setRatings({}); return; }
+    // FIXED: was a plain boolean ref that, once true, never reset — so
+    // switching accounts in the same tab kept showing the PREVIOUS
+    // account's recipe ratings forever. Keying by username makes each
+    // account get its own genuine fetch.
     if (loadedForUser.current === username) return;
     loadedForUser.current = username;
-    setRatings({});
+    setRatings({}); // clear immediately, no stale-account flash while loading
     if (!token) return;
     fetch(`${BASE}/api/user-data?resource=preferences`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.ok ? r.json() : Promise.reject())
@@ -21,11 +25,7 @@ export function usePreferences(token: string, username: string) {
   const rateRecipe = useCallback((recipeId: string, stars: number) => {
     setRatings(prev => ({ ...prev, [recipeId]: stars }));
     if (token) {
-      fetch(`${BASE}/api/user-data?resource=preferences`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ action: 'rate', recipeId, stars }),
-      }).catch(() => { /* ignore */ });
+      fetch(`${BASE}/api/user-data?resource=preferences`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ action: 'rate', recipeId, stars }) }).catch(() => { /* ignore */ });
     }
   }, [token]);
 

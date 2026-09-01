@@ -1,5 +1,4 @@
-import { ChartDataPoint, EnergyData } from '../types';
-
+import { ChartDataPoint, EnergyData, ConsumptionData } from '../types'; // add ConsumptionData here
 export function formatTimestampTick(ts: number, spanMs: number): string {
   const d = new Date(ts);
   if (spanMs > 86_400_000) return d.toLocaleDateString([], { weekday: 'short', hour: '2-digit' });
@@ -96,7 +95,28 @@ export function bucketDoorEvents(events: EnergyData[], rangeMs: number, bucketCo
 
 export function computeForecastCurve(data: ChartDataPoint[], aheadMs: number, absoluteBounds: [number, number], steps = 10): ChartDataPoint[] {
   const windowed = data.filter(p => p.timestamp).slice(-24);
-  if (windowed.length < 5) return [];
+  if (windowed.length === 0) return [];
+
+  const lastPoint = windowed[windowed.length - 1];
+  const lastTs = lastPoint.timestamp!;
+
+  // FIXED: was `if (windowed.length < 5) return [];` — an EMPTY array.
+  // With three sensor charts sharing one syncId, if Weight has fewer real
+  // points than Temperature (very plausible — the load cell has had more
+  // fault/retry history), Weight's combined array ends up shorter even
+  // with a shared "Predict" toggle, which still breaks index-based
+  // syncing. Now always returns exactly `steps` points once ANY real data
+  // exists, falling back to a flat continuation at the last known value
+  // when there's not enough signal for a real curve fit — keeping array
+  // length identical across all three charts whenever the toggle is on.
+  if (windowed.length < 5) {
+    const out: ChartDataPoint[] = [];
+    for (let i = 1; i <= steps; i++) {
+      const futureTs = lastTs + aheadMs * (i / steps);
+      out.push({ time: new Date(futureTs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), value: lastPoint.value, timestamp: futureTs });
+    }
+    return out;
+  }
 
   const t0 = windowed[0].timestamp!;
   const xs = windowed.map(p => (p.timestamp! - t0) / 60_000);
@@ -122,7 +142,7 @@ export function computeForecastCurve(data: ChartDataPoint[], aheadMs: number, ab
     b = det3([[S4, T2, S2], [S3, T1, S1], [S2, T0, S0]]) / D;
     c = det3([[S4, S3, T2], [S3, S2, T1], [S2, S1, T0]]) / D;
   }
-  a *= 0.35; // curvature damping — see prior explanation of this file
+  a *= 0.35;
 
   const yMin = Math.min(...ys), yMax = Math.max(...ys);
   const span = Math.max(yMax - yMin, 0.5);
@@ -130,7 +150,6 @@ export function computeForecastCurve(data: ChartDataPoint[], aheadMs: number, ab
   const hi = Math.min(yMax + span * 0.5, absoluteBounds[1]);
 
   const lastX = xs[n - 1];
-  const lastTs = windowed[n - 1].timestamp!;
   const aheadMin = aheadMs / 60_000;
 
   const out: ChartDataPoint[] = [];
@@ -166,4 +185,9 @@ export function exportEnergyCSV(data: EnergyData[]) {
 export function exportShoppingList(items: string[]) {
   const content = `Smart Fridge — Shopping List\nGenerated ${new Date().toLocaleString()}\n\n${items.map(i => `☐ ${i}`).join('\n')}\n`;
   downloadFile(`shopping-list-${Date.now()}.txt`, content, 'text/plain;charset=utf-8;');
+}
+
+export function exportConsumptionCSV(data: (ConsumptionData & { dateLabel?: string })[]) {
+  const rows = data.map(d => [d.dateLabel ?? d.day, d.dairy, d.meat, d.vegetables, d.fruits]);
+  downloadFile(`consumption-export-${Date.now()}.csv`, [['day', 'dairy', 'meat', 'vegetables', 'fruits'].join(','), ...rows.map(r => r.join(','))].join('\n'), 'text/csv;charset=utf-8;');
 }
